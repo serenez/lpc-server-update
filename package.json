@@ -1,0 +1,178 @@
+{
+  "name": "lpc-server-update",
+  "displayName": "LPC服务器连接器",
+  "version": "1.0.0",
+  "description": "用于连接和管理LPC游戏服务器的VS Code扩展",
+  "publisher": "SereneZmuy",
+  "author": {
+    "name": "不一",
+    "email": "279631638@qq.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SereneZmuy/lpc-server-update"
+  },
+  "keywords": [
+    "lpc",
+    "mud",
+    "game server",
+    "compiler",
+    "remote update"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "icon": "images/icon.png",
+  "main": "dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "activationEvents": [
+    
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "LPC服务器连接器",
+      "properties": {
+        "gameServerCompiler.host": {
+          "type": "string",
+          "default": "",
+          "description": "服务器IP地址"
+        },
+        "gameServerCompiler.port": {
+          "type": "number",
+          "default": 0,
+          "description": "服务器端口"
+        },
+        "gameServerCompiler.username": {
+          "type": "string",
+          "default": "",
+          "description": "巫师账号"
+        },
+        "gameServerCompiler.password": {
+          "type": "string",
+          "default": "",
+          "description": "巫师密码"
+        },
+        "gameServerCompiler.rootPath": {
+          "type": "string",
+          "default": "",
+          "description": "MUD项目根目录路径"
+        },
+        "gameServerCompiler.isConnected": {
+          "type": "boolean",
+          "default": false,
+          "description": "服务器连接状态",
+          "scope": "application"
+        },
+        "gameServerCompiler.serverKey": {
+          "type": "string",
+          "default": "",
+          "description": "服务器验证密钥"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "game-server-explorer",
+          "title": "LPC服务器",
+          "icon": "resources/server.svg"
+        }
+      ]
+    },
+    "views": {
+      "game-server-explorer": [
+        {
+          "type": "webview",
+          "id": "game-server-messages",
+          "name": "服务器消息",
+          "initialSize": 1,
+          "order": 1
+        },
+        {
+          "type": "webview",
+          "id": "game-server-buttons",
+          "name": "操作按钮",
+          "initialSize": 2,
+          "order": 2
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "game-server-compiler.connect",
+        "title": "连接游戏服务器",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.compileCurrentFile",
+        "title": "编译当前文件",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.compileDir",
+        "title": "编译目录",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.sendCommand",
+        "title": "发送自定义命令",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.restart",
+        "title": "重启服务器",
+        "category": "LPC服务器"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "game-server-compiler.connect",
+          "group": "lpcServer@1",
+          "when": "!gameServerCompiler.isConnected"
+        },
+        {
+          "command": "game-server-compiler.compileCurrentFile",
+          "group": "lpcServer@2",
+          "when": "gameServerCompiler.isConnected"
+        },
+        {
+          "command": "game-server-compiler.compileDir",
+          "group": "lpcServer@3",
+          "when": "gameServerCompiler.isConnected"
+        },
+        {
+          "command": "game-server-compiler.sendCommand",
+          "group": "lpcServer@4",
+          "when": "gameServerCompiler.isConnected"
+        },
+        {
+          "command": "game-server-compiler.restart",
+          "group": "lpcServer@5",
+          "when": "gameServerCompiler.isConnected"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "net": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^14.x.x",
+    "@types/vscode": "^1.60.0",
+    "typescript": "^4.x.x",
+    "@vscode/vsce": "^2.15.0",
+    "@typescript-eslint/eslint-plugin": "^5.x.x",
+    "@typescript-eslint/parser": "^5.x.x",
+    "eslint": "^8.x.x"
+  }
+} 
+

@@ -1,0 +1,40 @@
+# 源代码文件
+.vscode/**
+.vscode-test/**
+src/**
+out/**
+node_modules/**
+tsconfig.json
+
+# 开发工具配置
+.eslintrc.json
+.gitignore
+.editorconfig
+.gitattributes
+.git/**
+.github/**
+
+# 测试和调试文件
+test/**
+coverage/**
+**/*.map
+**/*.ts
+
+# 文档
+doc/**
+*.md
+!README.md
+!CHANGELOG.md
+
+# 临时文件
+.DS_Store
+*.log
+*.vsix
+*.tgz
+
+# 保留必要文件
+!dist/**
+!resources/**
+!images/**
+!package.json
+!LICENSE

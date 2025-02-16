@@ -29,18 +29,12 @@ function ensureDirectoryExists(dirPath: string) {
 // 读取配置文件
 function readConfig(): Config {
     try {
-        messageProvider?.addMessage(`尝试读取配置文件: ${configPath}`);
         if (fs.existsSync(configPath)) {
             const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData);
-            messageProvider?.addMessage(`成功读取配置: ${JSON.stringify(config, null, 2)}`);
-            return config;
-        } else {
-            messageProvider?.addMessage(`配置文件不存在: ${configPath}`);
+            return JSON.parse(configData);
         }
     } catch (error) {
         console.error('读取配置文件失败:', error);
-        messageProvider?.addMessage(`读取配置文件失败: ${error}`);
     }
     return {
         host: '',
@@ -59,19 +53,16 @@ async function saveConfig(config: Partial<Config>): Promise<void> {
         const newConfig = { ...currentConfig, ...config };
         ensureDirectoryExists(path.dirname(configPath));
         fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
-        messageProvider?.addMessage('配置文件已保存');
         
         // 同步更新VS Code设置
         const vsConfig = vscode.workspace.getConfiguration('gameServerCompiler');
         for (const [key, value] of Object.entries(newConfig)) {
             if (value !== undefined) {
                 await vsConfig.update(key, value, true);
-                messageProvider?.addMessage(`更新VS Code配置: ${key} = ${value}`);
             }
         }
     } catch (error) {
         console.error('保存配置文件失败:', error);
-        messageProvider?.addMessage(`保存配置文件失败: ${error}`);
         throw error;
     }
 }
@@ -191,10 +182,9 @@ function convertToMudPath(fullPath: string): string {
         // 移除文件扩展名
         relativePath = relativePath.replace(/\.[^/.]+$/, "");
         
-        messageProvider?.addMessage(`路径转换: ${fullPath} -> ${relativePath}`);
         return relativePath;
     } catch (error) {
-        throw new Error(`路径转换失败: ${error}`);
+        throw new Error('路径转换失败');
     }
 }
 
@@ -233,18 +223,16 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-        messageProvider?.addMessage(`配置文件路径: ${configPath}`);
         ensureDirectoryExists(path.dirname(configPath));
         
         if (!fs.existsSync(configPath)) {
-            messageProvider?.addMessage('配置文件不存在，创建默认配置');
             await saveConfig({
                 host: '',
                 port: 0,
                 username: '',
                 password: '',
                 rootPath: workspaceRoot,
-                serverKey: 'buyi-SerenezZmuy'  // 设置默认的serverKey
+                serverKey: 'buyi-SerenezZmuy'
             });
         }
 
@@ -252,17 +240,14 @@ export async function activate(context: vscode.ExtensionContext) {
         const config = readConfig();
         // 确保serverKey存在
         if (!config.serverKey) {
-            messageProvider?.addMessage('serverKey不存在，设置默认值');
             await saveConfig({
                 ...config,
                 serverKey: 'buyi-SerenezZmuy'
             });
         }
-        messageProvider?.addMessage(`当前配置: ${JSON.stringify(config, null, 2)}`);
         messageProvider.addMessage('插件初始化完成');
     } catch (error) {
         console.error('插件初始化错误:', error);
-        messageProvider?.addMessage(`插件初始化错误: ${error}`);
         vscode.window.showErrorMessage(`插件初始化失败: ${error}`);
     }
 
@@ -278,7 +263,7 @@ export async function activate(context: vscode.ExtensionContext) {
                         tcpClient.disconnect();
                         messageProvider?.addMessage('已断开服务器连接');
                     }
-                    return; // 无论选择是否，都直接返回，不执行后续连接逻辑
+                    return;
                 }
 
                 if (!await checkAndUpdateConfig()) {
@@ -286,12 +271,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
 
                 const config = readConfig();
-                messageProvider?.addMessage(`正在连接服务器 ${config.host}:${config.port}...`);
+                messageProvider?.addMessage('正在连接服务器...');
                 await tcpClient.connect(config.host, config.port);
                 messageProvider?.addMessage('服务器连接成功');
             } catch (error) {
-                messageProvider?.addMessage(`连接失败: ${error}`);
-                vscode.window.showErrorMessage(`连接失败: ${error}`);
+                messageProvider?.addMessage('连接失败');
+                vscode.window.showErrorMessage('连接失败');
             }
         },
         'game-server-compiler.compileCurrentFile': async () => {
@@ -308,20 +293,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
             try {
                 const filePath = editor.document.uri.fsPath;
-                messageProvider?.addMessage(`原始文件路径: ${filePath}`);
-                
-                const config = readConfig();
-                messageProvider?.addMessage(`项目根目录: ${config.rootPath}`);
-                
                 const mudPath = convertToMudPath(filePath);
-                messageProvider?.addMessage(`转换后的路径: ${mudPath}`);
-                
                 tcpClient.sendUpdateCommand(mudPath);
                 messageProvider?.addMessage(`正在编译文件: ${mudPath}`);
             } catch (error) {
-                const errorMessage = `编译文件失败: ${error}`;
-                messageProvider?.addMessage(errorMessage);
-                vscode.window.showErrorMessage(errorMessage);
+                vscode.window.showErrorMessage('编译文件失败');
             }
         },
         'game-server-compiler.compileDir': async () => {

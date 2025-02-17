@@ -655,31 +655,42 @@ export async function activate(context: vscode.ExtensionContext) {
             // 添加调试日志
             outputChannel.appendLine('==== 文件保存事件触发 ====');
             outputChannel.appendLine(`保存的文件: ${document.fileName}`);
-            outputChannel.appendLine(`自动编译设置: ${config.compile.autoCompileOnSave}`);
-            outputChannel.appendLine(`连接状态: ${tcpClient.isConnected()}`);
-            outputChannel.appendLine(`登录状态: ${tcpClient.isLoggedIn()}`);
             
-            if (config.compile.autoCompileOnSave && tcpClient.isConnected() && tcpClient.isLoggedIn()) {
-                outputChannel.appendLine('条件检查通过，准备编译');
-                // 只编译.c文件
-                if (document.fileName.endsWith('.c')) {
-                    try {
-                        const filePath = document.uri.fsPath;
-                        outputChannel.appendLine(`原始文件路径: ${filePath}`);
-                        const mudPath = convertToMudPath(filePath);
-                        outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
-                        messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
-                        tcpClient.sendUpdateCommand(mudPath);
-                        outputChannel.appendLine('编译命令已发送');
-                    } catch (error) {
-                        outputChannel.appendLine(`编译失败: ${error}`);
-                        messageProvider?.addMessage(`自动编译失败: ${error}`);
-                    }
-                } else {
-                    outputChannel.appendLine('不是.c文件，跳过编译');
+            // 首先检查登录状态
+            if (!tcpClient.isLoggedIn()) {
+                outputChannel.appendLine('角色未登录,跳过自动编译');
+                return;
+            }
+            
+            // 然后检查连接状态
+            if (!tcpClient.isConnected()) {
+                outputChannel.appendLine('服务器未连接,跳过自动编译');
+                return;
+            }
+            
+            // 最后检查自动编译设置
+            outputChannel.appendLine(`自动编译设置: ${config.compile.autoCompileOnSave}`);
+            if (!config.compile.autoCompileOnSave) {
+                outputChannel.appendLine('自动编译未开启,跳过编译');
+                return;
+            }
+            
+            // 只编译.c文件
+            if (document.fileName.endsWith('.c')) {
+                try {
+                    const filePath = document.uri.fsPath;
+                    outputChannel.appendLine(`原始文件路径: ${filePath}`);
+                    const mudPath = convertToMudPath(filePath);
+                    outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
+                    messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
+                    tcpClient.sendUpdateCommand(mudPath);
+                    outputChannel.appendLine('编译命令已发送');
+                } catch (error) {
+                    outputChannel.appendLine(`编译失败: ${error}`);
+                    messageProvider?.addMessage(`自动编译失败: ${error}`);
                 }
             } else {
-                outputChannel.appendLine('条件检查未通过，跳过编译');
+                outputChannel.appendLine('不是.c文件，跳过编译');
             }
             outputChannel.appendLine('==== 文件保存事件处理完成 ====\n');
         })

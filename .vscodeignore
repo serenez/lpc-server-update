@@ -1,10 +1,9 @@
 # 源代码文件
 .vscode/**
+!.vscode/muy-lpc-update.json
 .vscode-test/**
 src/**
 out/**
-node_modules/**
-tsconfig.json
 
 # 开发工具配置
 .eslintrc.json
@@ -38,3 +37,4 @@ doc/**
 !images/**
 !package.json
 !LICENSE
+!node_modules/**

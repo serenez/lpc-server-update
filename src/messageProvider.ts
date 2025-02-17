@@ -310,6 +310,9 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         let type = 'info';
         let extraClass = '';
 
+        // 检查消息是否已经包含emoji图标
+        const hasEmoji = /[\u{1F300}-\u{1F9FF}]/u.test(message);
+
         if (message.includes('成功') || message.includes('完成')) {
             type = 'success';
         } else if (message.includes('错误') || message.includes('失败')) {
@@ -327,7 +330,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
         const formattedMessage = `<div class="message ${type}${extraClass}">
             <span class="timestamp">[${timestamp}]</span>
-            ${showIcons ? `<span class="icon-container">💬</span>` : ''}
+            ${showIcons && !hasEmoji ? `<span class="icon-container">💬</span>` : ''}
             <span class="message-content">${message}</span>
         </div>`;
 

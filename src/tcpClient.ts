@@ -96,32 +96,34 @@ export class TcpClient {
                 // 将收到的数据添加到buffer
                 buffer = Buffer.concat([buffer, data]);
                 
-                // 根据配置的编码解码数据
-                let decodedData = '';
-                if (this.encoding.toUpperCase() === 'GBK') {
-                    decodedData = iconv.decode(buffer, 'gbk');
-                } else {
-                    decodedData = buffer.toString('utf8');
-                }
+                // 使用配置的编码解码数据
+                const decodedData = this.decodeData(buffer);
                 
-                if (decodedData.length > 0) {
+                // 检查是否有完整的消息(以\n结尾)
+                if (decodedData.endsWith('\n')) {
+                    // 分割消息
                     const messages = decodedData.split('\n');
-                    // 如果最后一个消息不完整，保留在buffer中
-                    if (!decodedData.endsWith('\n')) {
-                        buffer = this.encoding.toUpperCase() === 'GBK' ? 
-                            iconv.encode(messages.pop() || '', 'gbk') :
-                            Buffer.from(messages.pop() || '');
-                    } else {
-                        buffer = Buffer.alloc(0);
-                    }
-
-                    for (const message of messages) {
-                        const trimmedMessage = message.trim();
-                        if (trimmedMessage) {
-                            this.processMessage(trimmedMessage);
+                    
+                    // 清空buffer
+                    buffer = Buffer.alloc(0);
+                    
+                    // 处理每条完整的消息
+                    for (let message of messages) {
+                        if (message) { // 忽略空消息
+                            if (message.startsWith(`${this.ESC}[2;37;0m`)) {
+                                message = message.replace(`${this.ESC}[2;37;0m`, '');
+                            }
+                            const shouldTrim = !message.includes(this.ESC + 'MUY') && 
+                                             !message.match(/^\x1b\d{3}/);
+                            const processedMessage = shouldTrim ? message.trim() : message;
+                            
+                            if (processedMessage) {
+                                this.processMessage(processedMessage);
+                            }
                         }
                     }
                 }
+                // 如果消息不完整，继续等待更多数据
             } catch (error) {
                 this.log(`消息处理错误: ${error}`, LogLevel.ERROR);
                 buffer = Buffer.alloc(0);
@@ -159,50 +161,51 @@ export class TcpClient {
         
         let result = text;
         
-        // 1. 处理RGB颜色代码
+        // 1. 处理RGB颜色代码 (rgbs)
         result = result.replace(/\x1b\[f#[0-9a-fA-F]{6}m/g, '');
         
-        // 2. 处理基础颜色代码
-        const colorCodes = [
-            // 普通前景色 [30m-[37m
-            '\\[3[0-7]m',
-            // 高亮前景色 [1;30m-[1;37m
-            '\\[1;3[0-7]m',
-            // 普通背景色 [40m-[47m
-            '\\[4[0-7]m',
-            // 高亮背景色 [41;1m-[47;1m
-            '\\[4[0-7];1m',
-            // 重置
-            '\\[2;37;0m',
-            // 其他控制代码
-            '\\[1m',      // BOLD
-            '\\[2J',      // CLR
-            '\\[H',       // HOME
-            '\\[s',       // SAVEC
-            '\\[u',       // REST
-            '\\[5m',      // BLINK
-            '\\[4m',      // U
-            '\\[7m',      // REV
-            '\\[1,7m',    // HIREV
-            '\\[9m',      // DENGKUAN
-            '\\[r',       // UNFR
-            '\\[2;25r',   // FRTOP
-            '\\[1;24r'    // FRBOT
+        // 2. 处理基本颜色代码 (30-37)
+        result = result.replace(/\x1b\[3[0-7]m/g, '');
+        
+        // 3. 处理高亮颜色代码 (1;30-1;37)
+        result = result.replace(/\x1b\[1;3[0-7]m/g, '');
+        
+        // 4. 处理背景色代码 (40-47)
+        result = result.replace(/\x1b\[4[0-7]m/g, '');
+        
+        // 5. 处理高亮背景色代码 (41;1-47;1)
+        result = result.replace(/\x1b\[4[0-7];1m/g, '');
+        
+        // 6. 处理特殊控制代码
+        const controlCodes = [
+            '\\[2;37;0m',  // NOR
+            '\\[1m',       // BOLD
+            '\\[2J',       // CLR
+            '\\[H',        // HOME
+            '\\[s',        // SAVEC
+            '\\[u',        // REST
+            '\\[5m',       // BLINK
+            '\\[4m',       // U
+            '\\[7m',       // REV
+            '\\[1,7m',     // HIREV
+            '\\[9m',       // DENGKUAN
+            '\\[r',        // UNFR
+            '\\[2;25r',    // FRTOP
+            '\\[1;24r'     // FRBOT
         ];
         
-        // 将所有颜色代码替换为空
-        colorCodes.forEach(code => {
+        controlCodes.forEach(code => {
             result = result.replace(new RegExp('\x1b' + code, 'g'), '');
         });
         
-        // 3. 处理可能的裸露ESC字符
+        // 7. 处理可能的裸露ESC字符
         result = result.replace(/\x1b/g, '');
         
         return result;
     }
 
     private processMessage(message: string) {
-        // 检查是否包含新的MUY消息头
+        // 检查是否是MUY消息
         if (message.includes(this.ESC + 'MUY')) {
             // 重置状态,开始新的消息收集
             const muyStart = message.indexOf(this.ESC + 'MUY');
@@ -233,47 +236,24 @@ export class TcpClient {
             return;
         }
         
-        // 如果正在收集MUY消息
-        if (this.isCollectingMuy) {
-            this.muyBuffer += message;
-            this.log(`添加到MUY缓冲区: ${this.muyBuffer}`, LogLevel.DEBUG);
-            
-            // 检查是否收集完整
-            if (this.muyBuffer.includes('║')) {
-                const endIndex = this.muyBuffer.indexOf('║') + 1;
-                const completeMessage = this.muyBuffer.substring(0, endIndex);
-                this.log(`MUY消息收集完成: ${completeMessage}`, LogLevel.DEBUG);
-                this.processMuyMessage(completeMessage);
-                
-                // 重置状态
-                this.muyBuffer = '';
-                this.isCollectingMuy = false;
-                
-                // 处理剩余的消息
-                const remainingMessage = this.muyBuffer.substring(endIndex);
-                if (remainingMessage.length > 0) {
-                    this.log(`处理剩余消息: ${remainingMessage}`, LogLevel.DEBUG);
-                    this.processNormalMessage(remainingMessage);
-                }
-            }
+        // 检查是否是协议消息
+        const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
+        if (protocolMatch) {
+            const [, protocolCode, content] = protocolMatch;
+            this.processProtocolMessage(protocolCode, content);
             return;
         }
-
+        
         // 处理普通消息
         this.processNormalMessage(message);
     }
 
     private processNormalMessage(message: string) {
-        // 先清理颜色代码
-        const cleanedMessage = this.cleanColorCodes(message);
-        
-        if (message.startsWith(this.ESC)) {
-            const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
-            if (protocolMatch) {
-                const [, protocolCode, content] = protocolMatch;
-                this.processProtocolMessage(protocolCode, content);
-            }
-        } else {
+        // 先记录原始消息到调试日志
+        this.log('原始消息message:' + message, LogLevel.DEBUG);
+
+               const cleanedMessage = this.cleanColorCodes(message);
+            // 检查特定消息
             if (cleanedMessage === '版本验证成功') {
                 this.log('版本验证成功，开始登录', LogLevel.INFO);
                 this.login();
@@ -296,10 +276,24 @@ export class TcpClient {
                 this._isReconnecting = false;
                 this.reconnectAttempts = this.maxReconnectAttempts;
                 this.disconnect();
-            } else {
+            } else if (cleanedMessage.trim()) {  // 处理所有非空消息
                 this.appendToGameLog(cleanedMessage);
+                
+                // 选择合适的图标
                 let icon = '';
-                if (cleanedMessage.includes('成功')) {
+                if (/^[.]+$/.test(cleanedMessage)) {
+                    icon = '⏳ ';
+                } else if (cleanedMessage.includes('【系统提示】')) {
+                    icon = '🔔 ';
+                } else if (cleanedMessage.includes('成功编译')) {
+                    icon = '✨ ';
+                } else if (cleanedMessage.includes('开始编译')) {
+                    icon = '🔄 ';
+                } else if (cleanedMessage.includes('整理了目录')) {
+                    icon = '📦 ';
+                } else if (cleanedMessage.includes('总共有') && cleanedMessage.includes('档案被成功编译')) {
+                    icon = '🎉 ';
+                } else if (cleanedMessage.includes('成功')) {
                     icon = '✅ ';
                 } else if (cleanedMessage.includes('失败') || cleanedMessage.includes('错误')) {
                     icon = '❌ ';
@@ -310,9 +304,11 @@ export class TcpClient {
                 } else if (cleanedMessage.includes('断开连接')) {
                     icon = '🔌 ';
                 }
-                this.channels.server.appendLine(`${icon}${cleanedMessage}`);
+                
+                // 只通过messageProvider发送消息
+                const formattedMessage = `${icon}${cleanedMessage}`;
+                this.messageProvider?.addMessage(formattedMessage);
             }
-        }
     }
 
     private processProtocolMessage(code: string, content: string) {
@@ -551,11 +547,26 @@ export class TcpClient {
                         reject(err);
                     });
 
-                    this.socket?.connect(port, host, () => {
-                        this.log('Socket连接成功', LogLevel.INFO);
-                        this.setConnectionState(true);
-                        resolve();
-                    });
+                    // 检查是否是本地回环地址
+                    const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+                    
+                    // 如果是本地回环地址，尝试使用实际IP
+                    if (isLocalhost) {
+                        this.log('检测到本地回环地址，尝试使用实际IP', LogLevel.INFO);
+                        // 使用实际IP连接
+                        this.socket?.connect(port, '127.0.0.1', () => {
+                            this.log('Socket连接成功', LogLevel.INFO);
+                            this.setConnectionState(true);
+                            resolve();
+                        });
+                    } else {
+                        // 使用提供的地址连接
+                        this.socket?.connect(port, host, () => {
+                            this.log('Socket连接成功', LogLevel.INFO);
+                            this.setConnectionState(true);
+                            resolve();
+                        });
+                    }
                 });
 
                 // 使用Promise.race来处理超时
@@ -647,13 +658,8 @@ export class TcpClient {
         }
 
         try {
-            let data: Buffer;
-            if (this.encoding.toUpperCase() === 'GBK') {
-                data = iconv.encode(command + '\n', 'gbk');
-            } else {
-                data = Buffer.from(command + '\n', 'utf8');
-            }
-            
+            // 使用配置的编码进行编码
+            const data = this.encodeData(command + '\n');
             this.log(`发送命令: ${command}`, LogLevel.INFO);
             this.socket.write(data);
             return true;
@@ -1168,19 +1174,67 @@ export class TcpClient {
         return [key, value];
     }
 
-    // 添加更新编码的方法
+    // 修改 TcpClient 类中的 updateEncoding 方法
     private updateEncoding() {
         try {
             const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
             if (fs.existsSync(configPath)) {
                 const configData = fs.readFileSync(configPath, 'utf8');
                 const config = JSON.parse(configData);
-                this.encoding = config.encoding || 'UTF8';
-                this.log(`更新编码设置: ${this.encoding}`, LogLevel.INFO);
+                
+                // 如果没有encoding配置，设置默认值并保存
+                if (!config.encoding) {
+                    config.encoding = 'UTF8';
+                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+                    this.log('未找到编码配置，已设置为默认UTF8编码', LogLevel.INFO);
+                }
+                
+                this.encoding = config.encoding;
+                this.log(`当前使用的编码: ${this.encoding}`, LogLevel.INFO);
+                
+                // 监听配置文件变化
+                fs.watch(configPath, (eventType) => {
+                    if (eventType === 'change') {
+                        try {
+                            const newConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                            if (newConfig.encoding !== this.encoding) {
+                                this.encoding = newConfig.encoding || 'UTF8';
+                                this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
+                            }
+                        } catch (error) {
+                            this.log(`读取编码配置失败: ${error}`, LogLevel.ERROR);
+                        }
+                    }
+                });
+            } else {
+                this.log('配置文件不存在，使用默认UTF8编码', LogLevel.INFO);
+                this.encoding = 'UTF8';
             }
         } catch (error) {
-            this.log(`读取编码配置失败: ${error}`, LogLevel.ERROR);
+            this.log(`读取编码配置失败: ${error}，使用默认UTF8编码`, LogLevel.ERROR);
             this.encoding = 'UTF8';
+        }
+    }
+
+    private decodeData(data: Buffer): string {
+        try {
+            return this.encoding.toUpperCase() === 'GBK' 
+                ? iconv.decode(data, 'gbk')
+                : data.toString('utf8');
+        } catch (error) {
+            this.log(`解码数据失败: ${error}`, LogLevel.ERROR);
+            return data.toString('utf8');
+        }
+    }
+
+    private encodeData(text: string): Buffer {
+        try {
+            return this.encoding.toUpperCase() === 'GBK'
+                ? iconv.encode(text, 'gbk')
+                : Buffer.from(text, 'utf8');
+        } catch (error) {
+            this.log(`编码数据失败: ${error}`, LogLevel.ERROR);
+            return Buffer.from(text, 'utf8');
         }
     }
 }

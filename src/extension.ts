@@ -17,6 +17,7 @@ interface Config {
     password: string;
     rootPath: string;
     serverKey: string;
+    encoding: string;
     compile: {
         defaultDir: string;
         autoCompileOnSave: boolean;
@@ -51,6 +52,7 @@ function readConfig(): Config {
                 password: config.password || '',
                 rootPath: config.rootPath || path.dirname(configPath),
                 serverKey: config.serverKey || '',
+                encoding: config.encoding || 'UTF8',
                 compile: {
                     defaultDir: config.compile?.defaultDir || '',
                     // 优先使用 VS Code 设置的值，如果没有则使用配置文件的值
@@ -69,6 +71,7 @@ function readConfig(): Config {
             password: '',
             rootPath: path.dirname(configPath),
             serverKey: '',
+            encoding: 'UTF8',
             compile: {
                 defaultDir: '',
                 autoCompileOnSave: autoCompileOnSave || false,
@@ -85,6 +88,7 @@ function readConfig(): Config {
             password: '',
             rootPath: path.dirname(configPath),
             serverKey: '',
+            encoding: 'UTF8',
             compile: {
                 defaultDir: '',
                 autoCompileOnSave: false,
@@ -259,6 +263,7 @@ async function initializeConfig() {
                 password: '',
                 rootPath: workspaceRoot,
                 serverKey: 'buyi-SerenezZmuy',
+                encoding: 'UTF8',
                 compile: {
                     defaultDir: '',
                     autoCompileOnSave: false,
@@ -285,6 +290,7 @@ async function initializeConfig() {
             if (!config.password) missingFields.push('password');
             if (!config.rootPath) missingFields.push('rootPath');
             if (!config.serverKey) missingFields.push('serverKey');
+            if (!config.encoding) missingFields.push('encoding');
 
             // 如果有缺失字段，更新配置
             if (missingFields.length > 0) {
@@ -296,6 +302,7 @@ async function initializeConfig() {
                     password: config.password || '',
                     rootPath: config.rootPath || workspaceRoot,
                     serverKey: config.serverKey || 'buyi-SerenezZmuy',
+                    encoding: config.encoding || 'UTF8',
                     compile: {
                         defaultDir: config.compile?.defaultDir || '',
                         autoCompileOnSave: config.compile?.autoCompileOnSave || false,

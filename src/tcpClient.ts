@@ -206,9 +206,7 @@ export class TcpClient {
 
     private processMessage(message: string) {
         try {
-            // 记录原始消息
-            this.log(`处理原始消息: ${message}`, LogLevel.DEBUG);
-            
+
             // 如果正在收集MUY消息
             if (this.isCollectingMuy) {
                 this.muyBuffer += message;
@@ -1177,10 +1175,6 @@ export class TcpClient {
     private decodeData(data: Buffer): string {
         try {
             // 记录原始数据的十六进制形式用于调试
-            const hexData = data.toString('hex');
-            this.log(`接收到数据的十六进制表示: ${hexData}`, LogLevel.DEBUG);
-            this.log(`接收到数据长度: ${data.length}字节`, LogLevel.DEBUG);
-            
             if (this.encoding.toUpperCase() === 'GBK') {
                 // 使用GBK解码数据
                 const text = iconv.decode(data, 'GBK');
@@ -1193,10 +1187,8 @@ export class TcpClient {
                 
                 return utf8Text;
             }
-            
             // 如果是UTF8编码，直接解码
             const text = iconv.decode(data, 'UTF8');
-            this.log(`UTF8解码后的文本: ${text}`, LogLevel.DEBUG);
             return text;
         } catch (error) {
             this.log(`解码数据失败: ${error}`, LogLevel.ERROR);

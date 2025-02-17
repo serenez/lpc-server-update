@@ -234,6 +234,11 @@ function convertToMudPath(fullPath: string): string {
     }
 }
 
+// 检查文件是否可编译
+function isCompilableFile(filePath: string): boolean {
+    return filePath.endsWith('.c') || filePath.endsWith('.lpc');
+}
+
 // 初始化配置文件
 async function initializeConfig() {
     try {
@@ -474,8 +479,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
+            const filePath = editor.document.uri.fsPath;
+            if (!isCompilableFile(filePath)) {
+                vscode.window.showErrorMessage('只能编译.c或.lpc文件');
+                return;
+            }
+
             try {
-                const filePath = editor.document.uri.fsPath;
                 outputChannel.appendLine(`原始文件路径: ${filePath}`);
                 const mudPath = convertToMudPath(filePath);
                 outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
@@ -682,22 +692,23 @@ export async function activate(context: vscode.ExtensionContext) {
                 return;
             }
             
-            // 只编译.c文件
-            if (document.fileName.endsWith('.c')) {
-                try {
-                    const filePath = document.uri.fsPath;
-                    outputChannel.appendLine(`原始文件路径: ${filePath}`);
-                    const mudPath = convertToMudPath(filePath);
-                    outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
-                    messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
-                    tcpClient.sendUpdateCommand(mudPath);
-                    outputChannel.appendLine('编译命令已发送');
-                } catch (error) {
-                    outputChannel.appendLine(`编译失败: ${error}`);
-                    messageProvider?.addMessage(`自动编译失败: ${error}`);
-                }
-            } else {
-                outputChannel.appendLine('不是.c文件，跳过编译');
+            // 检查文件类型
+            if (!isCompilableFile(document.fileName)) {
+                outputChannel.appendLine('不是可编译的文件类型，跳过编译');
+                return;
+            }
+            
+            try {
+                const filePath = document.uri.fsPath;
+                outputChannel.appendLine(`原始文件路径: ${filePath}`);
+                const mudPath = convertToMudPath(filePath);
+                outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
+                messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
+                tcpClient.sendUpdateCommand(mudPath);
+                outputChannel.appendLine('编译命令已发送');
+            } catch (error) {
+                outputChannel.appendLine(`编译失败: ${error}`);
+                messageProvider?.addMessage(`自动编译失败: ${error}`);
             }
             outputChannel.appendLine('==== 文件保存事件处理完成 ====\n');
         })

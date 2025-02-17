@@ -205,54 +205,92 @@ export class TcpClient {
     }
 
     private processMessage(message: string) {
-        // 检查是否是MUY消息
-        if (message.includes(this.ESC + 'MUY')) {
-            // 重置状态,开始新的消息收集
-            const muyStart = message.indexOf(this.ESC + 'MUY');
-            this.isCollectingMuy = true;
-            const newMessage = message.substring(muyStart);
-            this.log(`开始收集新的MUY消息: ${newMessage}`, LogLevel.DEBUG);
+        try {
+            // 记录原始消息
+            this.log(`处理原始消息: ${message}`, LogLevel.DEBUG);
             
-            // 检查当前消息是否包含结束标记
-            if (newMessage.includes('║')) {
-                const endIndex = newMessage.indexOf('║') + 1;
-                const completeMessage = newMessage.substring(0, endIndex);
-                this.log(`处理完整的MUY消息: ${completeMessage}`, LogLevel.DEBUG);
-                this.processMuyMessage(completeMessage);
+            // 如果正在收集MUY消息
+            if (this.isCollectingMuy) {
+                this.muyBuffer += message;
                 
-                // 重置状态
-                this.muyBuffer = '';
-                this.isCollectingMuy = false;
-                
-                // 处理剩余的消息
-                const remainingMessage = newMessage.substring(endIndex);
-                if (remainingMessage.length > 0) {
-                    this.log(`处理剩余消息: ${remainingMessage}`, LogLevel.DEBUG);
-                    this.processNormalMessage(remainingMessage);
+                // 检查是否有结束标记
+                if (this.muyBuffer.includes('║')) {
+                    const endIndex = this.muyBuffer.indexOf('║') + 1;
+                    const completeMessage = this.muyBuffer.substring(0, endIndex);
+                    
+                    // 提取MUY到║之间的所有内容
+                    const content = completeMessage.substring(completeMessage.indexOf('MUY') + 3, completeMessage.indexOf('║'));
+                    this.log(`提取的原始内容: ${content}`, LogLevel.DEBUG);
+                    
+                    // 清理所有注释和颜色代码
+                    let cleanedContent = content.replace(/\/\*[\s\S]*?\*\//g, '');
+                    cleanedContent = this.cleanColorCodes(cleanedContent);
+                    cleanedContent = cleanedContent.replace(/\/\*[\s\S]*?\*\//g, '');
+                    
+                    try {
+                        this.log('开始解析LPC映射...', LogLevel.DEBUG);
+                        const jsonObj = this.parseLPCMapping(cleanedContent);
+                        const formattedJson = JSON.stringify(jsonObj, null, 2);
+                        
+                        if (this.messageProvider) {
+                            this.messageProvider.addMessage(`🔍 Eval结果:\n${formattedJson}`);
+                        }
+                    } catch (error) {
+                        this.log(`解析MUY消息失败: ${error}`, LogLevel.ERROR);
+                    }
+                    
+                    // 重置MUY消息状态
+                    this.muyBuffer = '';
+                    this.isCollectingMuy = false;
+                    
+                    // 处理剩余的消息
+                    const remainingMessage = completeMessage.substring(endIndex);
+                    if (remainingMessage.length > 0) {
+                        this.processMessage(remainingMessage);
+                    }
                 }
-            } else {
-                this.muyBuffer = newMessage;
+                return;
             }
-            return;
+            
+            // 检查是否是新的MUY消息
+            if (message.includes(this.ESC + 'MUY')) {
+                const muyStart = message.indexOf(this.ESC + 'MUY');
+                this.isCollectingMuy = true;
+                this.muyBuffer = message.substring(muyStart);
+                
+                // 如果第一段就包含结束标记,立即处理
+                if (this.muyBuffer.includes('║')) {
+                    this.processMessage(this.muyBuffer);
+                }
+                return;
+            }
+            
+            // 只有在不收集MUY消息时才处理其他类型的消息
+            if (!this.isCollectingMuy) {
+                // 检查是否是协议消息
+                const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
+                if (protocolMatch) {
+                    const [, protocolCode, content] = protocolMatch;
+                    this.processProtocolMessage(protocolCode, content);
+                    return;
+                }
+                
+                // 处理普通消息
+                this.processNormalMessage(message);
+            }
+        } catch (error) {
+            this.log(`处理消息失败: ${error}`, LogLevel.ERROR);
         }
-        
-        // 检查是否是协议消息
-        const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
-        if (protocolMatch) {
-            const [, protocolCode, content] = protocolMatch;
-            this.processProtocolMessage(protocolCode, content);
-            return;
-        }
-        
-        // 处理普通消息
-        this.processNormalMessage(message);
     }
 
     private processNormalMessage(message: string) {
-        // 先记录原始消息到调试日志
-        this.log('原始消息message:' + message, LogLevel.DEBUG);
+        try {
+            // 清理颜色代码
+            const cleanedMessage = this.cleanColorCodes(message);
+            
+            // 记录处理后的消息
+            this.log(`处理普通消息: ${cleanedMessage}`, LogLevel.DEBUG);
 
-               const cleanedMessage = this.cleanColorCodes(message);
             // 检查特定消息
             if (cleanedMessage === '版本验证成功') {
                 this.log('版本验证成功，开始登录', LogLevel.INFO);
@@ -305,10 +343,15 @@ export class TcpClient {
                     icon = '🔌 ';
                 }
                 
-                // 只通过messageProvider发送消息
+                // 显示消息到消息面板
                 const formattedMessage = `${icon}${cleanedMessage}`;
-                this.messageProvider?.addMessage(formattedMessage);
+                if (this.messageProvider) {
+                    this.messageProvider.addMessage(formattedMessage);
+                }
             }
+        } catch (error) {
+            this.log(`处理普通消息失败: ${error}`, LogLevel.ERROR);
+        }
     }
 
     private processProtocolMessage(code: string, content: string) {
@@ -892,12 +935,35 @@ export class TcpClient {
     }
 
     // 修改 appendToGameLog 方法
+    private ensureUTF8(text: string): string {
+        try {
+            if (this.encoding.toUpperCase() === 'GBK') {
+                // 检测文本是否已经是UTF8
+                const isUTF8 = text === iconv.decode(iconv.encode(text, 'UTF8'), 'UTF8');
+                if (!isUTF8) {
+                    // 如果不是UTF8，则进行转换
+                    const gbkBuffer = iconv.encode(text, 'GBK');
+                    const utf8Text = iconv.decode(gbkBuffer, 'UTF8');
+                    this.log(`编码转换成功: ${utf8Text}`, LogLevel.DEBUG);
+                    return utf8Text;
+                }
+            }
+            return text;
+        } catch (error) {
+            this.log(`编码转换失败: ${error}`, LogLevel.ERROR);
+            return text;
+        }
+    }
+
     private appendToGameLog(message: string) {
         if (message.trim()) {
+            // 确保消息是UTF8编码
+            const utf8Message = this.ensureUTF8(message);
+            
             // 调试面板显示详细信息
             this.channels.debug.appendLine('================================');
-            this.channels.debug.appendLine(`游戏消息: ${message}`);
-            this.channels.debug.appendLine(`消息长度: ${message.length}`);
+            this.channels.debug.appendLine(`游戏消息: ${utf8Message}`);
+            this.channels.debug.appendLine(`消息长度: ${utf8Message.length}`);
             this.channels.debug.appendLine(`接收时间: ${new Date().toISOString()}`);
             this.channels.debug.appendLine('消息分析:');
         }
@@ -1062,118 +1128,6 @@ export class TcpClient {
         }
     }
 
-    // 添加新方法处理MUY消息
-    private processMuyMessage(message: string) {
-        try {
-            // 提取MUY到║之间的所有内容
-            const content = message.substring(message.indexOf('MUY') + 3, message.length - 1);
-            
-            // 清理颜色代码
-            let cleanedContent = this.cleanColorCodes(content);
-
-            // 清理注释 /* ... */
-            cleanedContent = cleanedContent.replace(/\/\*.*?\*\//g, '');
-
-            // 检查是否是映射格式
-            if (cleanedContent.startsWith('([') && cleanedContent.endsWith('])')) {
-                // 格式化映射内容
-                const formattedContent = this.formatMapping(cleanedContent);
-                
-                // 显示格式化后的消息到消息面板
-                if (this.messageProvider) {
-                    this.messageProvider.addMessage(`<pre style="margin:0;white-space:pre-wrap;font-family:monospace;">${formattedContent}</pre>`);
-                }
-            } else {
-                // 非映射格式,直接显示
-                if (this.messageProvider) {
-                    this.messageProvider.addMessage(cleanedContent);
-                }
-            }
-            
-        } catch (error) {
-            this.log(`处理MUY消息出错: ${error}`, LogLevel.ERROR);
-        }
-    }
-
-    // 添加格式化映射的方法
-    private formatMapping(content: string, level: number = 0): string {
-        try {
-            // 基础缩进
-            const indent = '  '.repeat(level);
-            
-            // 如果不是映射格式,直接返回
-            if (!content.startsWith('([') || !content.endsWith('])')) {
-                return content;
-            }
-
-            // 移除外层括号
-            content = content.substring(2, content.length - 2);
-
-            // 分割键值对
-            const pairs: string[] = [];
-            let currentPair = '';
-            let bracketCount = 0;
-            
-            for (let i = 0; i < content.length; i++) {
-                const char = content[i];
-                if (char === '(' || char === '[') {
-                    bracketCount++;
-                } else if (char === ')' || char === ']') {
-                    bracketCount--;
-                }
-                
-                if (char === ',' && bracketCount === 0) {
-                    if (currentPair.trim()) {
-                        pairs.push(currentPair.trim());
-                    }
-                    currentPair = '';
-                } else {
-                    currentPair += char;
-                }
-            }
-            if (currentPair.trim()) {
-                pairs.push(currentPair.trim());
-            }
-
-            // 处理每个键值对
-            const formattedPairs = pairs.map(pair => {
-                const [key, value] = this.splitKeyValue(pair);
-                const formattedKey = key.replace(/"/g, '');
-                
-                // 如果值是映射,递归处理
-                if (value.startsWith('([') && value.endsWith('])')) {
-                    return `${indent}${formattedKey}: ${this.formatMapping(value, level + 1)}`;
-                }
-                
-                // 处理普通值
-                return `${indent}${formattedKey}: ${value}`;
-            });
-
-            // 组合结果
-            if (level === 0) {
-                return `{\n${formattedPairs.join(',\n')}\n}`;
-            } else {
-                return `{\n${formattedPairs.join(',\n')}\n${indent}}`;
-            }
-            
-        } catch (error) {
-            this.log(`格式化映射出错: ${error}`, LogLevel.ERROR);
-            return content;
-        }
-    }
-
-    // 添加分割键值对的方法
-    private splitKeyValue(pair: string): [string, string] {
-        const colonIndex = pair.indexOf(':');
-        if (colonIndex === -1) {
-            return [pair, ''];
-        }
-        
-        const key = pair.substring(0, colonIndex).trim();
-        const value = pair.substring(colonIndex + 1).trim();
-        return [key, value];
-    }
-
     // 修改 TcpClient 类中的 updateEncoding 方法
     private updateEncoding() {
         try {
@@ -1189,16 +1143,20 @@ export class TcpClient {
                     this.log('未找到编码配置，已设置为默认UTF8编码', LogLevel.INFO);
                 }
                 
-                this.encoding = config.encoding;
-                this.log(`当前使用的编码: ${this.encoding}`, LogLevel.INFO);
+                const newEncoding = config.encoding.toUpperCase();
+                if (this.encoding !== newEncoding) {
+                    this.encoding = newEncoding;
+                    this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
+                }
                 
                 // 监听配置文件变化
                 fs.watch(configPath, (eventType) => {
                     if (eventType === 'change') {
                         try {
                             const newConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-                            if (newConfig.encoding !== this.encoding) {
-                                this.encoding = newConfig.encoding || 'UTF8';
+                            const updatedEncoding = (newConfig.encoding || 'UTF8').toUpperCase();
+                            if (updatedEncoding !== this.encoding) {
+                                this.encoding = updatedEncoding;
                                 this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
                             }
                         } catch (error) {
@@ -1218,23 +1176,284 @@ export class TcpClient {
 
     private decodeData(data: Buffer): string {
         try {
-            return this.encoding.toUpperCase() === 'GBK' 
-                ? iconv.decode(data, 'gbk')
-                : data.toString('utf8');
+            // 记录原始数据的十六进制形式用于调试
+            const hexData = data.toString('hex');
+            this.log(`接收到数据的十六进制表示: ${hexData}`, LogLevel.DEBUG);
+            this.log(`接收到数据长度: ${data.length}字节`, LogLevel.DEBUG);
+            
+            if (this.encoding.toUpperCase() === 'GBK') {
+                // 使用GBK解码数据
+                const text = iconv.decode(data, 'GBK');
+                this.log(`GBK解码后的文本: ${text}`, LogLevel.DEBUG);
+                
+                // 将GBK文本转换为UTF8
+                const utf8Buffer = iconv.encode(text, 'UTF8');
+                const utf8Text = iconv.decode(utf8Buffer, 'UTF8');
+                this.log(`转换为UTF8后的文本: ${utf8Text}`, LogLevel.DEBUG);
+                
+                return utf8Text;
+            }
+            
+            // 如果是UTF8编码，直接解码
+            const text = iconv.decode(data, 'UTF8');
+            this.log(`UTF8解码后的文本: ${text}`, LogLevel.DEBUG);
+            return text;
         } catch (error) {
             this.log(`解码数据失败: ${error}`, LogLevel.ERROR);
-            return data.toString('utf8');
+            return data.toString();
         }
     }
 
     private encodeData(text: string): Buffer {
         try {
-            return this.encoding.toUpperCase() === 'GBK'
-                ? iconv.encode(text, 'gbk')
-                : Buffer.from(text, 'utf8');
+            if (this.encoding.toUpperCase() === 'GBK') {
+                // 如果当前是GBK模式，需要将UTF8文本转换为GBK
+                const gbkBuffer = iconv.encode(text, 'GBK');
+                this.log(`文本已编码为GBK，长度: ${gbkBuffer.length}字节`, LogLevel.DEBUG);
+                return gbkBuffer;
+            }
+            
+            // 如果是UTF8模式，直接编码
+            const buffer = iconv.encode(text, 'UTF8');
+            this.log(`文本已编码为UTF8，长度: ${buffer.length}字节`, LogLevel.DEBUG);
+            return buffer;
         } catch (error) {
-            this.log(`编码数据失败: ${error}`, LogLevel.ERROR);
-            return Buffer.from(text, 'utf8');
+            this.log(`编码失败: ${error}`, LogLevel.ERROR);
+            return Buffer.from(text);
         }
+    }
+
+    private parseLPCMapping(content: string): any {
+        // 如果不是映射格式,直接返回
+        if (!content.trim().startsWith('([') || !content.trim().endsWith('])')) {
+            return content.trim();
+        }
+
+        try {
+            // 移除外层括号
+            content = content.substring(content.indexOf('([') + 2, content.lastIndexOf('])'));
+            
+            // 清理注释
+            content = content.replace(/\/\*[\s\S]*?\*\//g, '');
+            this.log(`LPC映射清理注释后的内容: ${content}`, LogLevel.DEBUG);
+            
+            // 分割键值对
+            const pairs = this.splitPairs(content);
+            this.log(`分割的键值对数量: ${pairs.length}`, LogLevel.DEBUG);
+            
+            // 构建结果对象
+            const result: any = {};
+            
+            // 处理每个键值对
+            pairs.forEach(pair => {
+                // 清理键值对中的注释
+                pair = pair.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                this.log(`处理键值对: ${pair}`, LogLevel.DEBUG);
+                
+                const [key, value] = this.splitKeyValue(pair);
+                if (!key || !value) {
+                    this.log(`无效的键值对: ${pair}`, LogLevel.DEBUG);
+                    return;
+                }
+                
+                // 移除键的引号
+                const cleanKey = key.replace(/"/g, '').trim();
+                
+                // 清理值中的注释
+                let cleanValue = value.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                this.log(`清理后的值: ${cleanValue}`, LogLevel.DEBUG);
+                
+                // 递归处理值
+                if (cleanValue.startsWith('([') && cleanValue.endsWith('])')) {
+                    // 如果值是映射,递归解析
+                    result[cleanKey] = this.parseLPCMapping(cleanValue);
+                } else if (cleanValue.startsWith('({') && cleanValue.endsWith('})')) {
+                    // 如果值是数组,解析数组
+                    result[cleanKey] = this.parseLPCArray(cleanValue);
+                } else {
+                    // 处理基本类型
+                    result[cleanKey] = this.parseBasicValue(cleanValue);
+                }
+            });
+            
+            return result;
+            
+        } catch (error) {
+            this.log(`解析LPC映射出错: ${error}`, LogLevel.ERROR);
+            return content;
+        }
+    }
+
+    private parseLPCArray(content: string): any[] {
+        try {
+            // 移除外层括号
+            content = content.substring(2, content.length - 2);
+            
+            // 清理注释
+            content = content.replace(/\/\*[\s\S]*?\*\//g, '');
+            this.log(`LPC数组清理注释后的内容: ${content}`, LogLevel.DEBUG);
+            
+            // 分割数组元素
+            const elements = this.splitArrayElements(content);
+            
+            // 处理每个元素
+            return elements.map(element => {
+                // 清理元素中的注释
+                element = element.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                this.log(`处理数组元素: ${element}`, LogLevel.DEBUG);
+                
+                if (element.startsWith('([') && element.endsWith('])')) {
+                    return this.parseLPCMapping(element);
+                } else {
+                    return this.parseBasicValue(element);
+                }
+            });
+            
+        } catch (error) {
+            this.log(`解析LPC数组出错: ${error}`, LogLevel.ERROR);
+            return [];
+        }
+    }
+
+    private parseBasicValue(value: string): any {
+        // 清理注释
+        value = value.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        this.log(`处理基本值: ${value}`, LogLevel.DEBUG);
+        
+        // 移除尾部逗号
+        if (value.endsWith(',')) {
+            value = value.slice(0, -1).trim();
+        }
+        
+        // 尝试转换数字
+        if (/^-?\d+$/.test(value)) {
+            return parseInt(value);
+        }
+        if (/^-?\d*\.\d+$/.test(value)) {
+            return parseFloat(value);
+        }
+        
+        // 处理字符串(移除引号)
+        if (value.startsWith('"') && value.endsWith('"')) {
+            return value.slice(1, -1);
+        }
+        
+        return value;
+    }
+
+    private splitPairs(content: string): string[] {
+        const pairs: string[] = [];
+        let currentPair = '';
+        let bracketCount = 0;
+        let inString = false;
+        
+        for (let i = 0; i < content.length; i++) {
+            const char = content[i];
+            
+            // 处理字符串
+            if (char === '"' && content[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            
+            // 只在不在字符串中时计算括号
+            if (!inString) {
+                if (char === '(' || char === '[') {
+                    bracketCount++;
+                } else if (char === ')' || char === ']') {
+                    bracketCount--;
+                }
+            }
+            
+            // 只在不在字符串中且括号计数为0时处理逗号
+            if (char === ',' && bracketCount === 0 && !inString) {
+                if (currentPair.trim()) {
+                    pairs.push(currentPair.trim());
+                }
+                currentPair = '';
+            } else {
+                currentPair += char;
+            }
+        }
+        
+        if (currentPair.trim()) {
+            pairs.push(currentPair.trim());
+        }
+        
+        return pairs;
+    }
+
+    private splitArrayElements(content: string): string[] {
+        const elements: string[] = [];
+        let currentElement = '';
+        let bracketCount = 0;
+        let inString = false;
+        
+        for (let i = 0; i < content.length; i++) {
+            const char = content[i];
+            
+            // 处理字符串
+            if (char === '"' && content[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            
+            // 只在不在字符串中时计算括号
+            if (!inString) {
+                if (char === '(' || char === '[') {
+                    bracketCount++;
+                } else if (char === ')' || char === ']') {
+                    bracketCount--;
+                }
+            }
+            
+            // 只在不在字符串中且括号计数为0时处理逗号
+            if (char === ',' && bracketCount === 0 && !inString) {
+                if (currentElement.trim()) {
+                    elements.push(currentElement.trim());
+                }
+                currentElement = '';
+            } else {
+                currentElement += char;
+            }
+        }
+        
+        if (currentElement.trim()) {
+            elements.push(currentElement.trim());
+        }
+        
+        return elements;
+    }
+
+    private splitKeyValue(pair: string): [string, string] {
+        let colonIndex = -1;
+        let inString = false;
+        let bracketCount = 0;
+        
+        // 查找分隔键值对的冒号
+        for (let i = 0; i < pair.length; i++) {
+            const char = pair[i];
+            
+            if (char === '"' && pair[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            
+            if (!inString) {
+                if (char === '(' || char === '[') {
+                    bracketCount++;
+                } else if (char === ')' || char === ']') {
+                    bracketCount--;
+                } else if (char === ':' && bracketCount === 0) {
+                    colonIndex = i;
+                    break;
+                }
+            }
+        }
+        
+        if (colonIndex === -1) {
+            return [pair, ''];
+        }
+        
+        const key = pair.substring(0, colonIndex).trim();
+        const value = pair.substring(colonIndex + 1).trim();
+        return [key, value];
     }
 }

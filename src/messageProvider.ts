@@ -1,4 +1,18 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
+
+interface Config {
+    rootPath: string;
+    serverKey: string;
+    encoding: string;
+    compile: {
+        autoCompileOnSave: boolean;
+        defaultDir: string;
+        timeout: number;
+        showDetails: boolean;
+    };
+}
 
 export class MessageProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
@@ -7,6 +21,57 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     constructor(extensionUri: vscode.Uri) {
         this._extensionUri = extensionUri;
+    }
+
+    private async handleEncodingChange(currentEncoding: string) {
+        try {
+            // 读取当前编码设置
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (!workspaceRoot) {
+                throw new Error('未找到工作区目录');
+            }
+
+            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
+            const configData = fs.readFileSync(configPath, 'utf8');
+            const config = JSON.parse(configData) as Config;
+            
+            // 获取实际的当前编码
+            const actualEncoding = config.encoding || 'UTF8';
+            
+            // 构建编码选项
+            const encodings = ['UTF8', 'GBK'];
+            const items = encodings.map(enc => ({
+                label: enc,
+                description: enc === actualEncoding ? '当前编码' : '',
+                picked: enc === actualEncoding
+            }));
+
+            // 显示选择框
+            const selected = await vscode.window.showQuickPick(items, {
+                placeHolder: '选择编码',
+                title: '更改编码设置'
+            });
+
+            if (selected) {
+                // 更新配置文件
+                config.encoding = selected.label;
+                fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+                
+                // 更新按钮文本
+                this._view?.webview.postMessage({ 
+                    type: 'updateEncoding',
+                    encoding: selected.label
+                });
+
+                // 显示成功消息
+                this.addMessage(`编码设置已更改为: ${selected.label}`);
+                
+                // 通知需要重新连接
+                vscode.window.showInformationMessage('编码设置已更改,需要重新连接服务器以应用更改。');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage('更新编码设置失败: ' + error);
+        }
     }
 
     public resolveWebviewView(
@@ -20,7 +85,23 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        // 读取当前编码设置
+        let currentEncoding = 'UTF8';
+        try {
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (workspaceRoot) {
+                const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
+                if (fs.existsSync(configPath)) {
+                    const configData = fs.readFileSync(configPath, 'utf8');
+                    const config = JSON.parse(configData) as Config;
+                    currentEncoding = config.encoding || 'UTF8';
+                }
+            }
+        } catch (error) {
+            console.error('读取编码设置失败:', error);
+        }
+
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, currentEncoding);
 
         // 处理来自webview的消息
         webviewView.webview.onDidReceiveMessage(message => {
@@ -29,11 +110,14 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     this._messages = [];
                     this._view?.webview.postMessage({ type: 'clearMessages' });
                     break;
+                case 'changeEncoding':
+                    this.handleEncodingChange(message.currentEncoding);
+                    break;
             }
         });
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview) {
+    private _getHtmlForWebview(webview: vscode.Webview, currentEncoding: string) {
         const config = vscode.workspace.getConfiguration('gameServerCompiler');
         const colors = config.get<any>('messages.colors', {
             success: '#4CAF50',
@@ -53,7 +137,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     body {
                         padding: 10px;
                         font-family: var(--vscode-font-family);
-                        font-size: var(--vscode-font-size);
+                        font-size: 13px;
                         color: var(--vscode-foreground);
                         position: relative;
                         height: 100vh;
@@ -67,83 +151,149 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         height: calc(100vh - 50px);
                         overflow-y: auto;
                         padding-bottom: 40px;
-                        gap: 8px;
+                        gap: 6px;
                     }
                     #message-container::-webkit-scrollbar {
-                        width: 8px;
+                        width: 6px;
                     }
                     #message-container::-webkit-scrollbar-track {
                         background: transparent;
                     }
                     #message-container::-webkit-scrollbar-thumb {
                         background: var(--vscode-scrollbarSlider-background);
-                        border-radius: 4px;
+                        border-radius: 3px;
                     }
                     #message-container::-webkit-scrollbar-thumb:hover {
                         background: var(--vscode-scrollbarSlider-hoverBackground);
                     }
                     .message {
                         margin: 0;
-                        padding: 8px 12px;
-                        border-radius: 6px;
+                        padding: 6px 10px;
+                        border-radius: 4px;
                         word-break: break-all;
-                        line-height: 1.5;
+                        line-height: 1.4;
                         display: flex;
                         align-items: flex-start;
-                        gap: 8px;
+                        gap: 6px;
                         transition: all 0.2s ease;
                         border: 1px solid transparent;
                         background: var(--vscode-editor-background);
-                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                        font-size: 13px;
+                    }
+                    .message.has-code {
+                        display: block;
+                    }
+                    .message.has-code .timestamp,
+                    .message.has-code .icon-container {
+                        display: inline-block;
+                        vertical-align: top;
+                        margin-bottom: 6px;
                     }
                     .message:hover {
-                        border-color: var(--vscode-focusBorder);
-                        background: var(--vscode-editor-selectionBackground);
+                        background: var(--vscode-editor-background);
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    }
+                    .success:hover { 
+                        color: #4dc352;
+                        border-color: #4dc352;
+                        background: rgba(46, 160, 67, 0.12);
+                    }
+                    .error:hover { 
+                        color: #ff5a52;
+                        border-color: #ff5a52;
+                        background: rgba(255, 90, 82, 0.12);
+                    }
+                    .warning:hover { 
+                        color: #e8a317;
+                        border-color: #e8a317;
+                        background: rgba(232, 163, 23, 0.12);
+                    }
+                    .info:hover { 
+                        color: #69b5ff;
+                        border-color: #69b5ff;
+                        background: rgba(105, 181, 255, 0.12);
+                    }
+                    .system:hover { 
+                        color: #c89fff;
+                        border-color: #c89fff;
+                        background: rgba(200, 159, 255, 0.12);
+                    }
+                    .temp-message:hover {
+                        background: rgba(88, 166, 255, 0.1);
+                        border-color: #58a6ff;
                     }
                     .timestamp {
                         color: var(--vscode-descriptionForeground);
-                        font-size: 0.9em;
-                        font-family: monospace;
-                        padding: 2px 4px;
-                        border-radius: 3px;
+                        font-size: 12px;
+                        font-family: var(--vscode-editor-font-family);
+                        padding: 1px 4px;
+                        border-radius: 2px;
                         background: var(--vscode-editor-lineHighlightBackground);
                         white-space: nowrap;
+                        opacity: 0.9;
+                    }
+                    .message:hover .timestamp {
+                        opacity: 1;
                     }
                     .icon-container {
                         display: ${showIcons ? 'inline-flex' : 'none'};
                         align-items: center;
                         justify-content: center;
-                        width: 20px;
-                        height: 20px;
-                        font-size: 16px;
+                        width: 16px;
+                        height: 16px;
+                        font-size: 14px;
+                        opacity: 0.9;
+                    }
+                    .message:hover .icon-container {
+                        opacity: 1;
                     }
                     .message-content {
                         flex: 1;
+                        line-height: 1.5;
+                    }
+                    .code-block {
+                        margin: 6px 0 0 0;
+                        padding: 8px 10px;
+                        background: var(--vscode-textCodeBlock-background);
+                        border-radius: 3px;
+                        font-family: var(--vscode-editor-font-family);
+                        font-size: 12px;
+                        line-height: 1.4;
+                        overflow-x: auto;
+                        white-space: pre;
+                    }
+                    .message:hover .code-block {
+                        background: var(--vscode-textCodeBlock-background);
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    }
+                    .code-block code {
+                        color: var(--vscode-textPreformat-foreground);
                     }
                     .success { 
-                        color: ${colors.success};
-                        border-left: 3px solid ${colors.success};
-                        background: ${colors.success}11;
+                        color: #4dc352;
+                        border-left: 2px solid #4dc352;
+                        background: rgba(46, 160, 67, 0.08);
                     }
                     .error { 
-                        color: ${colors.error};
-                        border-left: 3px solid ${colors.error};
-                        background: ${colors.error}11;
+                        color: #ff5a52;
+                        border-left: 2px solid #ff5a52;
+                        background: rgba(255, 90, 82, 0.08);
                     }
                     .warning { 
-                        color: ${colors.warning};
-                        border-left: 3px solid ${colors.warning};
-                        background: ${colors.warning}11;
+                        color: #e8a317;
+                        border-left: 2px solid #e8a317;
+                        background: rgba(232, 163, 23, 0.08);
                     }
                     .info { 
-                        color: ${colors.info};
-                        border-left: 3px solid ${colors.info};
-                        background: ${colors.info}11;
+                        color: #69b5ff;
+                        border-left: 2px solid #69b5ff;
+                        background: rgba(105, 181, 255, 0.08);
                     }
                     .system { 
-                        color: ${colors.system};
-                        border-left: 3px solid ${colors.system};
-                        background: ${colors.system}11;
+                        color: #c89fff;
+                        border-left: 2px solid #c89fff;
+                        background: rgba(200, 159, 255, 0.08);
                     }
                     .temp-message {
                         background: var(--vscode-editor-selectionBackground);
@@ -187,9 +337,35 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         font-size: 14px;
                         line-height: 1;
                     }
+                    .encoding-button {
+                        position: fixed;
+                        top: 10px;
+                        right: 10px;
+                        padding: 4px 8px;
+                        background: var(--vscode-button-secondaryBackground);
+                        color: var(--vscode-button-secondaryForeground);
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 12px;
+                        display: flex;
+                        align-items: center;
+                        gap: 4px;
+                        opacity: 0.8;
+                        transition: all 0.2s ease;
+                        z-index: 1000;
+                    }
+                    .encoding-button:hover {
+                        opacity: 1;
+                        background: var(--vscode-button-secondaryHoverBackground);
+                    }
                 </style>
             </head>
             <body>
+                <button class="encoding-button" onclick="changeEncoding()">
+                    <span class="icon">🔤</span>
+                    <span>编码: ${currentEncoding}</span>
+                </button>
                 <div id="message-container">
                     ${this._messages.join('\n')}
                 </div>
@@ -206,10 +382,10 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 <script>
                     const vscode = acquireVsCodeApi();
                     const messageContainer = document.getElementById('message-container');
-                    const scrollLockButton = document.getElementById('scrollLockButton');
                     const config = ${JSON.stringify({
                         autoScroll: config.get<boolean>('messages.autoScroll', true),
-                        maxCount: config.get<number>('messages.maxCount', 1000)
+                        maxCount: config.get<number>('messages.maxCount', 1000),
+                        encoding: currentEncoding
                     })};
                     let autoScroll = config.autoScroll;
                     
@@ -248,6 +424,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         }
                     }
                     
+                    function changeEncoding() {
+                        vscode.postMessage({
+                            command: 'changeEncoding',
+                            currentEncoding: config.encoding
+                        });
+                    }
+
                     window.addEventListener('message', event => {
                         const message = event.data;
                         switch (message.type) {
@@ -263,11 +446,62 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                             case 'clearMessages':
                                 messageContainer.innerHTML = '';
                                 break;
+                            case 'updateEncoding':
+                                const encodingButton = document.querySelector('.encoding-button span:last-child');
+                                if (encodingButton) {
+                                    encodingButton.textContent = '编码: ' + message.encoding;
+                                }
+                                break;
                         }
                     });
+
+                    // 初始化
+                    updateButtons();
                 </script>
             </body>
             </html>`;
+    }
+
+    private formatTSValue(value: any): string {
+        if (typeof value === 'string') {
+            return `"${value}"`;
+        }
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            return value.toString();
+        }
+        if (value === null) {
+            return 'null';
+        }
+        if (Array.isArray(value)) {
+            const items = value.map(item => this.formatTSValue(item)).join(',\n');
+            return `[\n${this.indent(items)}\n]`;
+        }
+        if (typeof value === 'object') {
+            const entries = Object.entries(value).map(([key, val]) => 
+                `"${key}": ${this.formatTSValue(val)}`
+            ).join(',\n');
+            return `{\n${this.indent(entries)}\n}`;
+        }
+        return String(value);
+    }
+
+    private indent(text: string): string {
+        return text.split('\n').map(line => `  ${line}`).join('\n');
+    }
+
+    private wrapInCodeBlock(code: string, language: string = 'typescript'): string {
+        return `<pre class="code-block ${language}"><code>${this.escapeHtml(code)}</code></pre>`;
+    }
+
+    private escapeHtml(text: string): string {
+        const map: {[key: string]: string} = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
 
     public addMessage(message: string) {
@@ -309,9 +543,10 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
         let type = 'info';
         let extraClass = '';
+        let formattedMessage = message;
 
-        // 检查消息是否已经包含emoji图标
-        const hasEmoji = /[\u{1F300}-\u{1F9FF}]/u.test(message);
+        // 检查消息是否已经包含emoji图标或特殊Unicode字符
+        const hasEmoji = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{2300}-\u{23FF}]|[\u{2B00}-\u{2BFF}]|[\u{E000}-\u{F8FF}]/u.test(message);
 
         if (message.includes('成功') || message.includes('完成')) {
             type = 'success';
@@ -328,14 +563,29 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             extraClass = ' temp-message';
         }
 
-        const formattedMessage = `<div class="message ${type}${extraClass}">
+        // 检查是否包含JSON或TS对象
+        if (message.includes('Eval结果:')) {
+            try {
+                const jsonStart = message.indexOf('\n') + 1;
+                const jsonStr = message.substring(jsonStart);
+                const jsonObj = JSON.parse(jsonStr);
+                const formattedJson = this.formatTSValue(jsonObj);
+                formattedMessage = `${message.substring(0, jsonStart)}${this.wrapInCodeBlock(formattedJson)}`;
+                extraClass += ' has-code';
+            } catch (e) {
+                // 如果解析失败,保持原始消息
+                console.error('JSON解析失败:', e);
+            }
+        }
+
+        const messageHtml = `<div class="message ${type}${extraClass}">
             <span class="timestamp">[${timestamp}]</span>
             ${showIcons && !hasEmoji ? `<span class="icon-container">💬</span>` : ''}
-            <span class="message-content">${message}</span>
+            <span class="message-content">${formattedMessage}</span>
         </div>`;
 
-        this._messages.push(formattedMessage);
-        this._view?.webview.postMessage({ type: 'addMessage', value: formattedMessage });
+        this._messages.push(messageHtml);
+        this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
     }
 
     public dispose() {

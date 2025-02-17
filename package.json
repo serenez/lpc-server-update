@@ -1,7 +1,7 @@
 {
   "name": "lpc-server-update",
   "displayName": "LPC服务器连接器",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "用于连接和管理LPC游戏服务器的VS Code扩展",
   "publisher": "SereneZmuy",
   "author": {
@@ -40,41 +40,131 @@
     "configuration": {
       "title": "LPC服务器连接器",
       "properties": {
-        "gameServerCompiler.host": {
-          "type": "string",
-          "default": "",
-          "description": "服务器IP地址"
-        },
-        "gameServerCompiler.port": {
+        "gameServerCompiler.messages.maxCount": {
           "type": "number",
-          "default": 0,
-          "description": "服务器端口"
+          "default": 1000,
+          "description": "最大保留消息数量",
+          "minimum": 100,
+          "maximum": 10000
         },
-        "gameServerCompiler.username": {
+        "gameServerCompiler.messages.timeFormat": {
+          "type": "string",
+          "default": "HH:mm:ss",
+          "description": "时间戳格式",
+          "enum": [
+            "HH:mm",
+            "HH:mm:ss",
+            "hh:mm:ss a",
+            "YYYY-MM-DD HH:mm:ss"
+          ],
+          "enumDescriptions": [
+            "24小时制 时:分",
+            "24小时制 时:分:秒",
+            "12小时制 时:分:秒 上午/下午",
+            "完整日期时间"
+          ]
+        },
+        "gameServerCompiler.messages.showIcons": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示消息图标"
+        },
+        "gameServerCompiler.messages.autoScroll": {
+          "type": "boolean",
+          "default": true,
+          "description": "自动滚动到最新消息"
+        },
+        "gameServerCompiler.messages.colors": {
+          "type": "object",
+          "default": {
+            "success": "#4CAF50",
+            "error": "#f44336",
+            "warning": "#ff9800",
+            "info": "#2196F3",
+            "system": "#9C27B0"
+          },
+          "description": "消息类型颜色配置",
+          "properties": {
+            "success": {
+              "type": "string",
+              "description": "成功消息颜色"
+            },
+            "error": {
+              "type": "string",
+              "description": "错误消息颜色"
+            },
+            "warning": {
+              "type": "string",
+              "description": "警告消息颜色"
+            },
+            "info": {
+              "type": "string",
+              "description": "普通消息颜色"
+            },
+            "system": {
+              "type": "string",
+              "description": "系统消息颜色"
+            }
+          }
+        },
+        "gameServerCompiler.compile.defaultDir": {
           "type": "string",
           "default": "",
-          "description": "巫师账号"
+          "description": "默认编译目录"
         },
-        "gameServerCompiler.password": {
-          "type": "string",
-          "default": "",
-          "description": "巫师密码"
-        },
-        "gameServerCompiler.rootPath": {
-          "type": "string",
-          "default": "",
-          "description": "MUD项目根目录路径"
-        },
-        "gameServerCompiler.isConnected": {
+        "gameServerCompiler.compile.autoCompileOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "服务器连接状态",
-          "scope": "application"
+          "description": "保存文件时是否自动编译"
         },
-        "gameServerCompiler.serverKey": {
-          "type": "string",
-          "default": "",
-          "description": "服务器验证密钥"
+        "gameServerCompiler.compile.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "编译超时时间(毫秒)"
+        },
+        "gameServerCompiler.compile.showDetails": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否显示编译详细信息"
+        },
+        "gameServerCompiler.connection.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "description": "最大重连次数"
+        },
+        "gameServerCompiler.connection.retryInterval": {
+          "type": "number",
+          "default": 5000,
+          "description": "重连间隔时间(毫秒)"
+        },
+        "gameServerCompiler.connection.timeout": {
+          "type": "number",
+          "default": 10000,
+          "description": "连接超时时间(毫秒)"
+        },
+        "gameServerCompiler.connection.heartbeatInterval": {
+          "type": "number",
+          "default": 30000,
+          "description": "心跳包间隔时间(毫秒)"
+        },
+        "gameServerCompiler.ui.messagesPanelSize": {
+          "type": "number",
+          "default": 1,
+          "description": "消息面板初始大小",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "gameServerCompiler.ui.buttonsPanelSize": {
+          "type": "number",
+          "default": 2,
+          "description": "按钮面板初始大小",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "gameServerCompiler.ui.showButtons": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否显示操作按钮"
         }
       }
     },
@@ -142,22 +232,22 @@
         {
           "command": "game-server-compiler.compileCurrentFile",
           "group": "lpcServer@2",
-          "when": "gameServerCompiler.isConnected"
+          "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
         },
         {
           "command": "game-server-compiler.compileDir",
           "group": "lpcServer@3",
-          "when": "gameServerCompiler.isConnected"
+          "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
         },
         {
           "command": "game-server-compiler.sendCommand",
           "group": "lpcServer@4",
-          "when": "gameServerCompiler.isConnected"
+          "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
         },
         {
           "command": "game-server-compiler.restart",
           "group": "lpcServer@5",
-          "when": "gameServerCompiler.isConnected"
+          "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
         }
       ]
     }

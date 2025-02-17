@@ -4,10 +4,16 @@ import * as crypto from 'crypto';
 import { LogLevel } from './logManager';
 import * as path from 'path';
 import * as fs from 'fs';
+import { ButtonProvider } from './buttonProvider';
 
 interface MessageOutput {
     appendLine(value: string): void;
     show(preserveFocus?: boolean): void;
+}
+
+interface MessageChannels {
+    debug: MessageOutput;
+    server: MessageOutput;
 }
 
 export class TcpClient {
@@ -16,8 +22,9 @@ export class TcpClient {
     private loggedIn: boolean = false;
     private versionVerified: boolean = false;  // 添加版本验证标志
     private isFirstData: boolean = true;  // 添加首次数据标记
-    private outputChannel: MessageOutput;
-    private buttonProvider: any;  // 添加ButtonProvider引用
+    private channels: MessageChannels;
+    private buttonProvider: ButtonProvider;
+    private messageProvider: MessageOutput;  // 添加 messageProvider
     private reconnectTimer: NodeJS.Timeout | null = null;
     private lastHost: string = '';
     private lastPort: number = 0;
@@ -28,13 +35,30 @@ export class TcpClient {
     private isFirstConnect = true;
     private isFirstLogin = true;
     private ESC = '\x1b';
-    constructor(outputChannel: MessageOutput, buttonProvider: any) {
-        this.outputChannel = outputChannel;
-        this.buttonProvider = buttonProvider;  // 保存ButtonProvider引用
+    private retryCount: number = 0;
+    private retryTimer: NodeJS.Timeout | null = null;
+    private heartbeatTimer: NodeJS.Timeout | null = null;
+    private config: vscode.WorkspaceConfiguration;
+
+    constructor(
+        channels: MessageChannels,
+        buttonProvider: ButtonProvider
+    ) {
+        this.channels = channels;
+        this.buttonProvider = buttonProvider;
+        this.messageProvider = channels.server;  // 初始化 messageProvider
+        this.config = vscode.workspace.getConfiguration('gameServerCompiler');
+        // 监听配置变化
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('gameServerCompiler.connection')) {
+                this.config = vscode.workspace.getConfiguration('gameServerCompiler');
+                this.updateHeartbeat();
+            }
+        });
         this.initSocket();
     }
 
-  private initSocket() {
+    private initSocket() {
         if (this.socket) {
             this.socket.removeAllListeners();
             this.socket.destroy();
@@ -59,9 +83,19 @@ export class TcpClient {
             try {
                 // 将新数据添加到缓冲区
                 buffer += data.toString();
+          
+                // 检查是否以命令提示符结尾
+                const endsWithPrompt = buffer.endsWith('> ');
                 
-                // 如果没有完整的消息，继续等待
-                if (buffer[buffer.length - 1] !== '\n') {
+                // 如果以命令提示符结尾，移除它并单独处理
+                let prompt = '';
+                if (endsWithPrompt) {
+                    prompt = '> ';
+                    buffer = buffer.slice(0, -2);
+                }
+
+                // 如果没有完整的消息且不是以命令提示符结尾，继续等待
+                if (!buffer.includes('\n') && !endsWithPrompt) {
                     this.log('数据不完整，等待更多数据...', LogLevel.DEBUG);
                     return;
                 }
@@ -70,6 +104,11 @@ export class TcpClient {
                 const messages = buffer.split('\n');
                 // 保留未完成的消息
                 buffer = messages.pop() || '';
+
+                // 如果有命令提示符，加回去
+                if (endsWithPrompt) {
+                    buffer += prompt;
+                }
 
                 // 处理每条完整的消息
                 for (const message of messages) {
@@ -82,7 +121,7 @@ export class TcpClient {
                         const protocolMatch = trimmedMessage.match(/^\x1b(\d{3})(.*)/);
                         if (protocolMatch) {
                             const [, protocolCode, content] = protocolMatch;
-                            
+                          
                             // 处理不同协议消息
                             switch(protocolCode) {
                                 case '012': // HP信息，直接跳过
@@ -91,11 +130,41 @@ export class TcpClient {
                                 case '000':
                                     if (content === '0007') {
                                         this.log('收到登录成功信号', LogLevel.INFO);
-                                        this.loggedIn = true;
-                                        this.handleStatusChange('loggedIn', '角色登录成功！');
+                                        this.setLoginState(true);
                                     }
                                     continue;
-                                    
+                                case '015': // 临时消息，检查是否包含错误信息
+                                    // 移除ZJTMPSAY标记
+                                    const cleanContent = content;
+                                    if (cleanContent.includes('密码错误') || cleanContent.includes('账号不存在')) {
+                                        // 这是登录错误消息
+                                        this.log(cleanContent, LogLevel.ERROR, true);
+                                        this.channels.server.appendLine(`❌ ${cleanContent}`);
+                                        this.disconnect();
+                                    } else if (cleanContent.includes('更新中') || cleanContent.includes('维护中')) {
+                                        // 服务器维护消息
+                                        this.log(cleanContent, LogLevel.INFO, true);
+                                        this.channels.server.appendLine(`🔧 ${cleanContent}`);
+                                        this.disconnect();
+                                    } else {
+                                        // 其他临时消息，也显示在服务器消息中
+                                        this.log(cleanContent, LogLevel.INFO);
+                                        // 根据消息内容选择图标
+                                        let icon = ''; // 移除默认图标
+                                        if (cleanContent.includes('成功')) {
+                                            icon = '✅ ';
+                                        } else if (cleanContent.includes('失败') || cleanContent.includes('错误')) {
+                                            icon = '❌ ';
+                                        } else if (cleanContent.includes('警告') || cleanContent.includes('注意')) {
+                                            icon = '⚠️ ';
+                                        } else if (cleanContent.includes('系统消息:')) {
+                                            icon = '🔧 ';
+                                        } else if (cleanContent.includes('断开连接')) {
+                                            icon = '🔌 ';
+                                        }
+                                        this.channels.server.appendLine(`${icon}${cleanContent}`);
+                                    }
+                                    continue;
                                 default:
                                     continue;
                             }
@@ -116,7 +185,7 @@ export class TcpClient {
                             continue;
                         }
                     }
-                    else if (trimmedMessage.includes('ver1.2')) {
+                    else if (trimmedMessage.startsWith('ver')) {
                         this.log('收到服务器连接成功信号', LogLevel.INFO);
                         this.connected = true;
                         this.handleStatusChange('connected', '服务器连接成功！');
@@ -133,7 +202,23 @@ export class TcpClient {
                         continue;
                     }
                     else {
+                        // 保留原有的调试日志
                         this.appendToGameLog(trimmedMessage);
+                        
+                        // 添加显示到服务器消息框
+                        let icon = '';
+                        if (trimmedMessage.includes('成功')) {
+                            icon = '✅ ';
+                        } else if (trimmedMessage.includes('失败') || trimmedMessage.includes('错误')) {
+                            icon = '❌ ';
+                        } else if (trimmedMessage.includes('警告') || trimmedMessage.includes('注意')) {
+                            icon = '⚠️ ';
+                        } else if (trimmedMessage.includes('系统消息:')) {
+                            icon = '🔧 ';
+                        } else if (trimmedMessage.includes('断开连接')) {
+                            icon = '🔌 ';
+                        }
+                        this.channels.server.appendLine(`${icon}${trimmedMessage}`);
                     }
                 }
             } catch (error) {
@@ -277,23 +362,64 @@ export class TcpClient {
 
     private log(message: string, level: LogLevel = LogLevel.INFO, showNotification: boolean = false) {
         if (message.trim()) {
-            // 修改时间戳格式
-            const now = new Date();
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            const timestamp = `${hours}:${minutes}`;
-            
-            // 清理ANSI颜色代码
             const cleanMessage = this.cleanAnsiCodes(message);
-            const logMessage = `[${timestamp}] ${cleanMessage}`;
-            
-            this.outputChannel.appendLine(logMessage);
-            this.outputChannel.show(false);
-            
-            vscode.commands.executeCommand('game-server-compiler.appendLog', {
-                message: logMessage,
-                isError: level === LogLevel.ERROR
-            });
+            let prefix = level === LogLevel.ERROR ? '[错误]' : level === LogLevel.DEBUG ? '[调试]' : '[信息]';
+            this.channels.debug.appendLine(`${prefix} ${cleanMessage}`);
+
+            let icon = '';
+            let content = '';
+            let shouldShow = false;
+
+            if (level === LogLevel.ERROR) {
+                if (message.includes('连接错误') || message.includes('连接失败')) {
+                    icon = '❌ ';
+                    content = '服务器连接失败';
+                    shouldShow = true;
+                } else if (message.includes('验证失败')) {
+                    icon = '❌ ';
+                    content = '服务器验证失败';
+                    shouldShow = true;
+                } else if (message.includes('登录失败') || message.includes('登录超时')) {
+                    icon = '❌ ';
+                    content = '角色登录失败';
+                    shouldShow = true;
+                }
+            } else if (level === LogLevel.INFO) {
+                if (message.includes('正在初始化插件')) {
+                    icon = '🔧 ';
+                    content = '正在初始化插件...';
+                    shouldShow = true;
+                } else if (message.includes('插件初始化完成')) {
+                    icon = '✅ ';
+                    content = '插件初始化完成';
+                    shouldShow = true;
+                } else if (message.includes('服务器连接成功')) {
+                    if (!this.connected || message.includes('成功连接到')) {
+                        icon = '🔌 ';
+                        content = '服务器连接成功';
+                        shouldShow = true;
+                    }
+                } else if (message.includes('版本验证成功')) {
+                    icon = '✅ ';
+                    content = '版本验证通过';
+                    shouldShow = true;
+                } else if (message.includes('角色登录成功')) {
+                    if (!this.loggedIn || this.isFirstLogin) {
+                        icon = '👤 ';
+                        content = '角色登录成功';
+                        shouldShow = true;
+                        this.isFirstLogin = false;
+                    }
+                } else if (message.includes('断开连接')) {
+                    icon = '🔌 ';
+                    content = '服务器已断开';
+                    shouldShow = true;
+                }
+            }
+
+            if (shouldShow && content) {
+                this.channels.server.appendLine(`${icon}${content}`);
+            }
 
             if (showNotification) {
                 if (level === LogLevel.ERROR) {
@@ -363,70 +489,59 @@ export class TcpClient {
         this._isReconnecting = false;
     }
 
-    async connect(host: string, port: number): Promise<void> {
-        try {
-            this.lastHost = host;
-            this.lastPort = port;
-            this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
-            
-            // 确保socket已初始化
-            this.initSocket();
+    public async connect(host: string, port: number): Promise<void> {
+        if (this.connected) {
+            return;
+        }
 
-            return new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    reject(new Error(`连接超时: ${host}:${port}`));
-                }, 5000);
+        return new Promise((resolve, reject) => {
+            try {
+                this.lastHost = host;
+                this.lastPort = port;
+                this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
+                
+                // 确保socket已初始化
+                this.initSocket();
+
+                // 设置连接超时
+                const timeout = this.config.get<number>('connection.timeout', 10000);
+                this.socket?.setTimeout(timeout);
 
                 this.socket?.connect(port, host, () => {
-                    clearTimeout(timeout);
                     this.setConnectionState(true);  // 移到这里设置连接状态
                     this.log(`成功连接到 ${host}:${port}`, LogLevel.INFO);
+                    this.startHeartbeat();
                     resolve();
                 });
 
                 this.socket?.once('error', (err) => {
-                    clearTimeout(timeout);
                     this.handleConnectionError(err);
                     reject(err);
                 });
-            });
-        } catch (error) {
-            this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
-            throw error;
-        }
+            } catch (error) {
+                this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
+                reject(error);
+            }
+        });
     }
 
     private async sendKey() {
         try {
-            // 每次都优先从配置文件读取
+            // 只从配置文件读取
             const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
             if (fs.existsSync(configPath)) {
                 const configData = fs.readFileSync(configPath, 'utf8');
                 const fileConfig = JSON.parse(configData);
                 if (fileConfig.serverKey) {
-                    // 更新VS Code配置
-                    const config = vscode.workspace.getConfiguration('gameServerCompiler');
-                    await config.update('serverKey', fileConfig.serverKey, true);
-                    this.log(`从配置文件读取到serverKey: ${fileConfig.serverKey}`, LogLevel.INFO);
+                    this.log(`从配置文件读取到serverKey`, LogLevel.INFO);
                     const key = `${this.sha1(fileConfig.serverKey)}\n`;
                     this.socket?.write(key);
                     this.log('发送版本验证密钥', LogLevel.INFO);
                     return;
                 }
             }
-            
-            // 如果配置文件读取失败，尝试从VS Code配置读取
-            const config = vscode.workspace.getConfiguration('gameServerCompiler');
-            const serverKey = config.get<string>('serverKey');
-            if (serverKey) {
-                this.log(`从VS Code配置读取到serverKey: ${serverKey}`, LogLevel.INFO);
-                const key = `${this.sha1(serverKey)}\n`;
-                this.socket?.write(key);
-                this.log('发送版本验证密钥', LogLevel.INFO);
-                return;
-            }
 
-            const errorMsg = '服务器密钥未配置，请在设置中配置serverKey';
+            const errorMsg = '服务器密钥未配置，请在.vscode/muy-lpc-update.json中配置serverKey';
             this.log(errorMsg, LogLevel.ERROR, true);
             this.disconnect();
         } catch (error) {
@@ -436,45 +551,33 @@ export class TcpClient {
     }
 
     private async login() {
-        const config = vscode.workspace.getConfiguration('gameServerCompiler');
-        let username = config.get<string>('username', '');
-        let password = config.get<string>('password', '');
-
-        if (!username || !password) {
-            const inputUsername = await vscode.window.showInputBox({
-                prompt: '请输入巫师账号',
-                placeHolder: 'username'
-            });
-            if (!inputUsername) {
-                this.disconnect();
-                return;
+        try {
+            // 从配置文件读取
+            const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
+            if (!fs.existsSync(configPath)) {
+                throw new Error('配置文件不存在，请先配置muy-lpc-update.json');
             }
-            username = inputUsername;
 
-            const inputPassword = await vscode.window.showInputBox({
-                prompt: '请输入密码',
-                placeHolder: 'password'
-            });
-            if (!inputPassword) {
-                this.disconnect();
-                return;
+            const configData = fs.readFileSync(configPath, 'utf8');
+            const config = JSON.parse(configData);
+
+            if (!config.username || !config.password) {
+                throw new Error('用户名或密码未配置，请在muy-lpc-update.json中配置');
             }
-            password = inputPassword;
 
-            // 保存配置
-            await config.update('username', username, true);
-            await config.update('password', password, true);
-            this.log('用户配置已保存', LogLevel.INFO);
+            this.log('开始登录...', LogLevel.INFO);
+            this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.INFO);
+            
+            const loginString = `${config.username}║${config.password}║zzzz\n`;
+            this.log(`发送登录信息: ${config.username}║${config.password}║zzzz`, LogLevel.INFO);
+            this.socket?.write(loginString, () => {
+                this.log('登录信息发送完成', LogLevel.DEBUG);
+            });
+        } catch (error) {
+            const errorMsg = `登录失败: ${error}`;
+            this.log(errorMsg, LogLevel.ERROR, true);
+            this.disconnect();
         }
-
-        this.log('开始登录...', LogLevel.INFO);
-        this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.INFO);
-        
-        const loginString = `${username}║${password}║zzzz\n`;
-        this.log(`发送登录信息: ${username}║${password}║zzzz`, LogLevel.INFO);
-        this.socket?.write(loginString, () => {
-            this.log('登录信息发送完成', LogLevel.DEBUG);
-        });
     }
 
     private sendCommand(command: string, commandName: string = '命令') {
@@ -507,7 +610,7 @@ export class TcpClient {
         this.sendCommand('shutdown', '重启命令');
     }
 
-    sendUpdateCommand(filePath: string) {
+    async sendUpdateCommand(filePath: string) {
         this.log(`准备发送更新命令，文件路径: ${filePath}`, LogLevel.INFO);
         
         if (!this.connected || !this.socket) {
@@ -523,14 +626,39 @@ export class TcpClient {
         }
 
         try {
+            const config = vscode.workspace.getConfiguration('gameServerCompiler');
+            const showDetails = config.get<boolean>('compile.showDetails', true);
+            const timeout = config.get<number>('compile.timeout', 30000);
+
             // 移除文件扩展名
             const filePathWithoutExt = filePath.replace(/\.[^/.]+$/, "");
             const command = `update ${filePathWithoutExt}`;
             
-            this.log(`发送更新命令: ${command}`, LogLevel.INFO);
-            this.socket.write(`${command}\n`, () => {
-                this.log('更新命令发送完成', LogLevel.DEBUG);
+            if (showDetails) {
+                this.log(`发送更新命令: ${command}`, LogLevel.INFO);
+            }
+
+            // 创建编译Promise
+            const compilePromise = new Promise<void>((resolve, reject) => {
+                try {
+                    this.socket?.write(`${command}\n`, () => {
+                        if (showDetails) {
+                            this.log('更新命令发送完成', LogLevel.DEBUG);
+                        }
+                        resolve();
+                    });
+                } catch (error) {
+                    reject(error);
+                }
             });
+
+            // 创建超时Promise
+            const timeoutPromise = new Promise<void>((_, reject) => {
+                setTimeout(() => reject(new Error('编译超时')), timeout);
+            });
+
+            // 等待编译完成或超时
+            await Promise.race([compilePromise, timeoutPromise]);
             
             return true;
         } catch (error) {
@@ -541,8 +669,46 @@ export class TcpClient {
         }
     }
 
-    sendCompileCommand() {
-        this.sendCommand('COMPILE', '编译命令');
+    async sendCompileCommand(command: string, showDetails: boolean = true) {
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const timeout = config.get<number>('compile.timeout', 30000);
+
+        try {
+            if (showDetails) {
+                this.log(`发送编译命令: ${command}`, LogLevel.INFO);
+            }
+
+            // 创建编译Promise
+            const compilePromise = new Promise<void>((resolve, reject) => {
+                try {
+                    this.sendCommand(command, '编译命令');
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            });
+
+            // 创建超时Promise
+            const timeoutPromise = new Promise<void>((_, reject) => {
+                setTimeout(() => reject(new Error('编译超时')), timeout);
+            });
+
+            // 等待编译完成或超时
+            await Promise.race([compilePromise, timeoutPromise]);
+            
+            if (showDetails) {
+                this.log('编译命令发送完成', LogLevel.INFO);
+            }
+            
+            return true;
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.log(`编译失败: ${errorMessage}`, LogLevel.ERROR);
+            if (showDetails) {
+                vscode.window.showErrorMessage(`编译失败: ${errorMessage}`);
+            }
+            return false;
+        }
     }
 
     disconnect() {
@@ -608,50 +774,83 @@ export class TcpClient {
         if (status === 'connected' && this.isFirstConnect) {
             showNotification = true;
             this.isFirstConnect = false;
-            // 确保更新按钮状态
+            // 只更新连接状态
             this.buttonProvider?.updateConnectionState(true);
         } 
         else if (status === 'disconnected') {
             this.connected = false;
-            this.loggedIn = false;
             showNotification = true;
             this.isFirstConnect = true;
             this.isFirstLogin = true;
-            // 确保更新按钮状态
+            // 断开连接时更新所有状态
             this.buttonProvider?.updateConnectionState(false);
-            // 确保连接状态更新
+            this.buttonProvider?.updateButtonState(false);
+            this.setLoginState(false);
             this.setConnectionState(false);
         }
-        else if (status === 'loggedIn' && this.isFirstLogin) {
-            showNotification = true;
-            this.isFirstLogin = false;
-            // 确保更新按钮状态
-            this.buttonProvider?.updateConnectionState(true);
-        }
         
-        this.log(message, LogLevel.INFO, showNotification);
+        if (showNotification) {
+            this.log(message, LogLevel.INFO, showNotification);
+        }
     }
 
-    // 简化消息输出方法
+    // 修改 appendToGameLog 方法
     private appendToGameLog(message: string) {
         if (message.trim()) {
-            const now = new Date();
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            const timestamp = `${hours}:${minutes}`;
-            
-            // 清理ANSI颜色代码
-            const cleanMessage = this.cleanAnsiCodes(message);
-            const logMessage = `[${timestamp}] ${cleanMessage}`;
-            this.outputChannel.appendLine(logMessage);
-            this.outputChannel.show(false);
+            // 调试面板显示详细信息
+            this.channels.debug.appendLine('================================');
+            this.channels.debug.appendLine(`游戏消息: ${message}`);
+            this.channels.debug.appendLine(`消息长度: ${message.length}`);
+            this.channels.debug.appendLine(`接收时间: ${new Date().toISOString()}`);
+            this.channels.debug.appendLine('消息分析:');
         }
     }
 
-    // 修改错误处理，确保错误消息显示在所有地方
+    private getProtocolName(code: string): string {
+        const protocols: { [key: string]: string } = {
+            '000': 'SYSY(系统消息)',
+            '001': 'INPUTTXT(输入文本)',
+            '002': 'ZJTITLE(标题)',
+            '003': 'ZJEXIT(出口)',
+            '004': 'ZJLONG(长消息)',
+            '005': 'ZJOBIN(对象进入)',
+            '006': 'ZJBTSET(按钮设置)',
+            '007': 'ZJOBLONG(对象长消息)',
+            '008': 'ZJOBACTS(对象动作)',
+            '009': 'ZJOBACTS2(对象动作2)',
+            '010': 'ZJYESNO(是否选择)',
+            '011': 'ZJMAPTXT(地图文本)',
+            '012': 'ZJHPTXT(HP文本)',
+            '013': 'ZJMORETXT(更多文本)',
+            '015': 'ZJTMPSAY(临时消息)',
+            '016': 'ZJFMSG(浮动消息)',
+            '018': 'ZJMSTR(字符串消息)',
+            '020': 'ZJPOPMENU(弹出菜单)',
+            '021': 'ZJTTMENU(标题菜单)',
+            '022': 'ZJCHARHP(角色HP)',
+            '023': 'ZJLONGXX(长消息XX)',
+            '100': 'ZJCHANNEL(频道消息)',
+            '999': 'SYSEXIT(系统退出)'
+        };
+        return protocols[code] || 'UNKNOWN';
+    }
+
     private handleConnectionError(error: Error) {
-        const errorMessage = `连接失败: ${error.message}`;
-        this.log(errorMessage, LogLevel.ERROR, true);
+        // 调试面板显示详细错误信息
+        this.channels.debug.appendLine('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        this.channels.debug.appendLine('============ 连接错误 ============');
+        this.channels.debug.appendLine(`错误信息: ${error.message}`);
+        this.channels.debug.appendLine(`错误堆栈: ${error.stack}`);
+        this.channels.debug.appendLine('------------ 当前状态 ------------');
+        this.channels.debug.appendLine(`连接状态: ${this.connected}`);
+        this.channels.debug.appendLine(`登录状态: ${this.loggedIn}`);
+        this.channels.debug.appendLine(`重连次数: ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        this.channels.debug.appendLine(`重连状态: ${this._isReconnecting}`);
+        this.channels.debug.appendLine('==================================');
+        this.channels.debug.appendLine('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        
+        // 服务器日志只显示简单错误提示
+        this.log(`连接错误: ${error.message}`, LogLevel.ERROR, true);
         this.handleDisconnect();
     }
 
@@ -687,11 +886,17 @@ export class TcpClient {
     private handleDisconnect() {
         const wasConnected = this.connected;
         this.setConnectionState(false);
+        this.setLoginState(false); // 确保登出状态
         this.log('与服务器断开连接', LogLevel.INFO);
         
         // 重置重连状态
         this._isReconnecting = false;
         this.reconnectAttempts = 0;
+        
+        // 确保按钮被禁用
+        if (this.buttonProvider) {
+            this.buttonProvider.updateButtonState(false);
+        }
         
         if (wasConnected) {
             // 确保开始重连
@@ -700,22 +905,56 @@ export class TcpClient {
     }
 
     // 新增方法：统一设置登录状态
-    private setLoginState(isLoggedIn: boolean) {
+    private async setLoginState(isLoggedIn: boolean) {
         const prevState = this.loggedIn;
         this.loggedIn = isLoggedIn;
         
-        if (isLoggedIn && !prevState) {  // 只在状态从未登录变为登录时触发
-            this.log(`登录状态更新: loggedIn=${this.loggedIn}`, LogLevel.INFO);
-            // 立即检查状态
-            this.log(`状态检查 - 登录成功后:`, LogLevel.DEBUG);
-            this.log(`- 连接状态: ${this.connected}`, LogLevel.DEBUG);
-            this.log(`- 登录状态: ${this.loggedIn}`, LogLevel.DEBUG);
-            
-            // 显示登录成功通知
-            vscode.window.showInformationMessage('游戏服务器登录成功！');
-            
-            // 确保更新连接状态
+        await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', isLoggedIn);
+        
+        if (isLoggedIn && !prevState) {
+            // 登录成功时更新所有状态
             this.setConnectionState(true);
+            this.buttonProvider?.updateConnectionState(true);
+            this.buttonProvider?.updateButtonState(true);
+            
+            // 触发状态变化处理
+            this.handleStatusChange('loggedIn', '角色登录成功');
+        } else if (!isLoggedIn && prevState) {
+            // 登出时禁用按钮
+            this.buttonProvider?.updateButtonState(false);
+            this.log('角色已登出', LogLevel.INFO);
         }
+    }
+
+    private startHeartbeat() {
+        this.stopHeartbeat();
+        const interval = this.config.get<number>('connection.heartbeatInterval', 30000);
+        if (interval > 0) {
+            this.heartbeatTimer = setInterval(() => {
+                if (this.connected) {
+                    this.sendRaw('heartbeat');
+                }
+            }, interval);
+        }
+    }
+
+    private stopHeartbeat() {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
+    }
+
+    private updateHeartbeat() {
+        if (this.connected) {
+            this.startHeartbeat();
+        }
+    }
+
+    private sendRaw(data: string) {
+        if (!this.connected || !this.socket) {
+            throw new Error('未连接到服务器');
+        }
+        this.socket.write(data + '\n');
     }
 } 

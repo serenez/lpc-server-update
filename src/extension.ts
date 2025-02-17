@@ -17,6 +17,12 @@ interface Config {
     password: string;
     rootPath: string;
     serverKey: string;
+    compile: {
+        defaultDir: string;
+        autoCompileOnSave: boolean;
+        timeout: number;
+        showDetails: boolean;
+    };
 }
 
 // 确保目录存在
@@ -31,7 +37,23 @@ function readConfig(): Config {
     try {
         if (fs.existsSync(configPath)) {
             const configData = fs.readFileSync(configPath, 'utf8');
-            return JSON.parse(configData);
+            const config = JSON.parse(configData);
+            
+            // 确保所有必需字段都存在
+            return {
+                host: config.host || '',
+                port: config.port || 0,
+                username: config.username || '',
+                password: config.password || '',
+                rootPath: config.rootPath || path.dirname(configPath),
+                serverKey: config.serverKey || '',
+                compile: {
+                    defaultDir: config.compile?.defaultDir || '',
+                    autoCompileOnSave: config.compile?.autoCompileOnSave || false,
+                    timeout: config.compile?.timeout || 30000,
+                    showDetails: config.compile?.showDetails || true
+                }
+            };
         }
     } catch (error) {
         console.error('读取配置文件失败:', error);
@@ -42,7 +64,13 @@ function readConfig(): Config {
         username: '',
         password: '',
         rootPath: path.dirname(configPath),
-        serverKey: ''
+        serverKey: '',
+        compile: {
+            defaultDir: '',
+            autoCompileOnSave: false,
+            timeout: 30000,
+            showDetails: true
+        }
     };
 }
 
@@ -53,14 +81,7 @@ async function saveConfig(config: Partial<Config>): Promise<void> {
         const newConfig = { ...currentConfig, ...config };
         ensureDirectoryExists(path.dirname(configPath));
         fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
-        
-        // 同步更新VS Code设置
-        const vsConfig = vscode.workspace.getConfiguration('gameServerCompiler');
-        for (const [key, value] of Object.entries(newConfig)) {
-            if (value !== undefined) {
-                await vsConfig.update(key, value, true);
-            }
-        }
+        messageProvider?.addMessage('配置已保存到muy-lpc-update.json');
     } catch (error) {
         console.error('保存配置文件失败:', error);
         throw error;
@@ -188,68 +209,160 @@ function convertToMudPath(fullPath: string): string {
     }
 }
 
-export async function activate(context: vscode.ExtensionContext) {
-    console.log('正在激活插件...');
-    
-    // 创建视图提供者
-    messageProvider = new MessageProvider(context.extensionUri);
-    buttonProvider = new ButtonProvider(context.extensionUri);
-
-    // 注册视图提供者
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('game-server-messages', messageProvider, {
-            webviewOptions: {
-                retainContextWhenHidden: true  // 保持WebView上下文
-            }
-        }),
-        vscode.window.registerWebviewViewProvider('game-server-buttons', buttonProvider, {
-            webviewOptions: {
-                retainContextWhenHidden: true  // 保持WebView上下文
-            }
-        })
-    );
-
-    // 创建TcpClient实例
-    tcpClient = new TcpClient({
-        appendLine: (line: string) => messageProvider?.addMessage(line),
-        show: () => {}
-    }, buttonProvider);
-
-    // 初始化配置
+// 初始化配置文件
+async function initializeConfig() {
     try {
+        // 获取工作区根目录
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
         if (!workspaceRoot) {
             throw new Error('未找到工作区目录');
         }
 
-        configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-        ensureDirectoryExists(path.dirname(configPath));
-        
+        // 设置配置文件路径
+        const vscodeDir = path.join(workspaceRoot, '.vscode');
+        configPath = path.join(vscodeDir, 'muy-lpc-update.json');
+
+        // 确保.vscode目录存在
+        if (!fs.existsSync(vscodeDir)) {
+            fs.mkdirSync(vscodeDir, { recursive: true });
+            messageProvider?.addMessage('创建.vscode目录');
+        }
+
+        // 检查配置文件是否存在
         if (!fs.existsSync(configPath)) {
-            await saveConfig({
+            // 创建默认配置
+            const defaultConfig = {
                 host: '',
                 port: 0,
                 username: '',
                 password: '',
                 rootPath: workspaceRoot,
-                serverKey: 'buyi-SerenezZmuy'
-            });
+                serverKey: 'buyi-SerenezZmuy',
+                compile: {
+                    defaultDir: '',
+                    autoCompileOnSave: false,
+                    timeout: 30000,
+                    showDetails: true
+                }
+            };
+
+            // 写入配置文件
+            fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+            messageProvider?.addMessage('创建默认配置文件');
+
+            // 显示欢迎信息
+            vscode.window.showInformationMessage('LPC服务器连接器已初始化，请在.vscode/muy-lpc-update.json中配置服务器信息。');
+        } else {
+            // 读取现有配置
+            const config = readConfig();
+            
+            // 检查配置完整性
+            const missingFields = [];
+            if (!config.host) missingFields.push('host');
+            if (!config.port) missingFields.push('port');
+            if (!config.username) missingFields.push('username');
+            if (!config.password) missingFields.push('password');
+            if (!config.rootPath) missingFields.push('rootPath');
+            if (!config.serverKey) missingFields.push('serverKey');
+
+            // 如果有缺失字段，更新配置
+            if (missingFields.length > 0) {
+                const updatedConfig = {
+                    ...config,
+                    host: config.host || '',
+                    port: config.port || 0,
+                    username: config.username || '',
+                    password: config.password || '',
+                    rootPath: config.rootPath || workspaceRoot,
+                    serverKey: config.serverKey || 'buyi-SerenezZmuy',
+                    compile: {
+                        defaultDir: config.compile?.defaultDir || '',
+                        autoCompileOnSave: config.compile?.autoCompileOnSave || false,
+                        timeout: config.compile?.timeout || 30000,
+                        showDetails: config.compile?.showDetails || true
+                    }
+                };
+
+                // 写入更新后的配置
+                fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2));
+                messageProvider?.addMessage('更新配置文件结构');
+
+                // 提示用户
+                vscode.window.showInformationMessage(`配置文件已更新，请补充以下信息: ${missingFields.join(', ')}`);
+            }
         }
 
-        // 读取配置
-        const config = readConfig();
-        // 确保serverKey存在
-        if (!config.serverKey) {
-            await saveConfig({
-                ...config,
-                serverKey: 'buyi-SerenezZmuy'
-            });
-        }
-        messageProvider.addMessage('插件初始化完成');
+        messageProvider?.addMessage('配置文件初始化完成');
+        return true;
     } catch (error) {
-        console.error('插件初始化错误:', error);
-        vscode.window.showErrorMessage(`插件初始化失败: ${error}`);
+        const errorMessage = `配置文件初始化失败: ${error}`;
+        messageProvider?.addMessage(errorMessage);
+        vscode.window.showErrorMessage(errorMessage);
+        return false;
     }
+}
+
+export async function activate(context: vscode.ExtensionContext) {
+    // 创建两个独立的输出通道
+    const outputChannel = vscode.window.createOutputChannel('LPC服务器调试');
+    const serverLogChannel = vscode.window.createOutputChannel('LPC服务器日志');
+    
+    // 确保面板显示
+    outputChannel.show(true);
+    
+    // 创建视图提供者
+    messageProvider = new MessageProvider(context.extensionUri);
+    buttonProvider = new ButtonProvider(context.extensionUri);
+
+    // 输出初始化日志
+    outputChannel.appendLine('========== LPC服务器连接器初始化 ==========');
+    outputChannel.appendLine(`时间: ${new Date().toLocaleString()}`);
+    outputChannel.appendLine(`工作区: ${vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '未知'}`);
+    outputChannel.appendLine('==========================================');
+    
+    messageProvider.addMessage('正在初始化插件...');
+
+    // 注册视图提供者
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('game-server-messages', messageProvider, {
+            webviewOptions: {
+                retainContextWhenHidden: true
+            }
+        }),
+        vscode.window.registerWebviewViewProvider('game-server-buttons', buttonProvider, {
+            webviewOptions: {
+                retainContextWhenHidden: true
+            }
+        })
+    );
+
+    // 创建TcpClient实例，传入两个不同的输出通道
+    tcpClient = new TcpClient({
+        debug: {
+            appendLine: (line: string) => outputChannel.appendLine(line),
+            show: () => outputChannel.show(false)
+        },
+        server: {
+            appendLine: (line: string) => {
+                serverLogChannel.appendLine(line);
+                messageProvider?.addMessage(line);
+            },
+            show: () => serverLogChannel.show(false)
+        }
+    }, buttonProvider);
+
+    // 初始化配置
+    if (!await initializeConfig()) {
+        outputChannel.appendLine('插件初始化失败');
+        messageProvider.addMessage('插件初始化失败');
+        return;
+    }
+
+    outputChannel.appendLine('插件初始化完成');
+    messageProvider.addMessage('插件初始化完成');
+    
+    // 将输出面板添加到订阅中
+    context.subscriptions.push(outputChannel);
 
     // 注册命令
     const commands = {
@@ -273,15 +386,39 @@ export async function activate(context: vscode.ExtensionContext) {
                 const config = readConfig();
                 messageProvider?.addMessage('正在连接服务器...');
                 await tcpClient.connect(config.host, config.port);
-                messageProvider?.addMessage('服务器连接成功');
+                
+                // 等待登录结果
+                const loginTimeout = 10000; // 10秒登录超时
+                const startTime = Date.now();
+                
+                while (Date.now() - startTime < loginTimeout) {
+                    if (tcpClient.isLoggedIn()) {
+                        messageProvider?.addMessage('角色登录成功');
+                        // 更新登录状态上下文
+                        await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', true);
+                        return;
+                    }
+                    if (!tcpClient.isConnected()) {
+                        throw new Error('连接已断开');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                // 登录超时，直接断开连接
+                messageProvider?.addMessage('登录超时，请重新连接');
+                await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', false);
+                tcpClient.disconnect();
+                
             } catch (error) {
-                messageProvider?.addMessage('连接失败');
-                vscode.window.showErrorMessage('连接失败');
+                const errorMsg = `${error}`;
+                messageProvider?.addMessage(errorMsg);
+                vscode.window.showErrorMessage(errorMsg);
+                await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', false);
             }
         },
         'game-server-compiler.compileCurrentFile': async () => {
-            if (!tcpClient.isConnected()) {
-                vscode.window.showErrorMessage('请先连接服务器');
+            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
+                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
             }
 
@@ -297,34 +434,72 @@ export async function activate(context: vscode.ExtensionContext) {
                 tcpClient.sendUpdateCommand(mudPath);
                 messageProvider?.addMessage(`正在编译文件: ${mudPath}`);
             } catch (error) {
+                messageProvider?.addMessage(`编译文件失败: ${error}`);
                 vscode.window.showErrorMessage('编译文件失败');
             }
         },
         'game-server-compiler.compileDir': async () => {
-            if (!tcpClient.isConnected()) {
-                vscode.window.showErrorMessage('请先连接服务器');
+            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
+                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
             }
 
+            const config = readConfig();
+            
             const path = await vscode.window.showInputBox({
                 prompt: '输入要编译的目录路径',
                 placeHolder: '例如: /cmds',
+                value: config.compile.defaultDir,
                 ignoreFocusOut: true
             });
 
             if (path) {
                 try {
-                    tcpClient.sendCustomCommand(`updateall ${path}`);
-                    messageProvider?.addMessage(`发送编译目录命令: updateall ${path}`);
+                    // 如果是新的目录路径,保存为默认值
+                    if (path !== config.compile.defaultDir) {
+                        await saveConfig({ 
+                            compile: { 
+                                ...config.compile, 
+                                defaultDir: path 
+                            } 
+                        });
+                    }
+
+                    if (config.compile.showDetails) {
+                        messageProvider?.addMessage(`开始编译目录: ${path}`);
+                    }
+
+                    // 设置编译超时
+                    const timeout = config.compile.timeout;
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('编译超时')), timeout);
+                    });
+
+                    // 执行编译命令
+                    const compilePromise = new Promise<void>((resolve, reject) => {
+                        try {
+                            tcpClient.sendCustomCommand(`updateall ${path}`);
+                            if (config.compile.showDetails) {
+                                messageProvider?.addMessage(`发送编译目录命令: updateall ${path}`);
+                            }
+                            resolve();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+
+                    // 使用Promise.race来处理超时
+                    await Promise.race([compilePromise, timeoutPromise]);
                 } catch (error) {
-                    messageProvider?.addMessage(`发送编译目录命令失败: ${error}`);
-                    vscode.window.showErrorMessage(`发送编译目录命令失败: ${error}`);
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    messageProvider?.addMessage(`编译目录失败: ${errorMessage}`);
+                    vscode.window.showErrorMessage(`编译目录失败: ${errorMessage}`);
                 }
             }
         },
         'game-server-compiler.sendCommand': async () => {
-            if (!tcpClient.isConnected()) {
-                vscode.window.showErrorMessage('请先连接服务器');
+            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
+                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
             }
 
@@ -345,8 +520,8 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.restart': async () => {
-            if (!tcpClient.isConnected()) {
-                vscode.window.showErrorMessage('请先连接服务器');
+            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
+                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
             }
 
@@ -376,6 +551,27 @@ export async function activate(context: vscode.ExtensionContext) {
             vscode.commands.registerCommand(commandId, handler)
         );
     });
+
+    // 注册文件保存监听
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument(async (document) => {
+            const config = readConfig();
+            
+            if (config.compile.autoCompileOnSave && tcpClient.isConnected() && tcpClient.isLoggedIn()) {
+                // 检查文件是否是.c或.h文件
+                if (document.fileName.endsWith('.c') || document.fileName.endsWith('.h')) {
+                    try {
+                        const filePath = document.uri.fsPath;
+                        const mudPath = convertToMudPath(filePath);
+                        messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
+                        tcpClient.sendUpdateCommand(mudPath);
+                    } catch (error) {
+                        messageProvider?.addMessage(`自动编译失败: ${error}`);
+                    }
+                }
+            }
+        })
+    );
 }
 
 export function deactivate() {

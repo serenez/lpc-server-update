@@ -34,6 +34,16 @@ export class MessageProvider implements vscode.WebviewViewProvider {
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const colors = config.get<any>('messages.colors', {
+            success: '#4CAF50',
+            error: '#f44336',
+            warning: '#ff9800',
+            info: '#2196F3',
+            system: '#9C27B0'
+        });
+        const showIcons = config.get<boolean>('messages.showIcons', true);
+
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
@@ -100,7 +110,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         white-space: nowrap;
                     }
                     .icon-container {
-                        display: inline-flex;
+                        display: ${showIcons ? 'inline-flex' : 'none'};
                         align-items: center;
                         justify-content: center;
                         width: 20px;
@@ -111,24 +121,34 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         flex: 1;
                     }
                     .success { 
-                        color: #4CAF50;
-                        border-left: 3px solid #4CAF50;
+                        color: ${colors.success};
+                        border-left: 3px solid ${colors.success};
+                        background: ${colors.success}11;
                     }
                     .error { 
-                        color: #f44336;
-                        border-left: 3px solid #f44336;
+                        color: ${colors.error};
+                        border-left: 3px solid ${colors.error};
+                        background: ${colors.error}11;
                     }
                     .warning { 
-                        color: #ff9800;
-                        border-left: 3px solid #ff9800;
+                        color: ${colors.warning};
+                        border-left: 3px solid ${colors.warning};
+                        background: ${colors.warning}11;
                     }
                     .info { 
-                        color: #2196F3;
-                        border-left: 3px solid #2196F3;
+                        color: ${colors.info};
+                        border-left: 3px solid ${colors.info};
+                        background: ${colors.info}11;
                     }
                     .system { 
-                        color: #9C27B0;
-                        border-left: 3px solid #9C27B0;
+                        color: ${colors.system};
+                        border-left: 3px solid ${colors.system};
+                        background: ${colors.system}11;
+                    }
+                    .temp-message {
+                        background: var(--vscode-editor-selectionBackground);
+                        border-left: 3px solid var(--vscode-focusBorder);
+                        font-weight: 500;
                     }
                     .button-container {
                         position: fixed;
@@ -187,10 +207,16 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     const vscode = acquireVsCodeApi();
                     const messageContainer = document.getElementById('message-container');
                     const scrollLockButton = document.getElementById('scrollLockButton');
-                    let autoScroll = true;
+                    const config = ${JSON.stringify({
+                        autoScroll: config.get<boolean>('messages.autoScroll', true),
+                        maxCount: config.get<number>('messages.maxCount', 1000)
+                    })};
+                    let autoScroll = config.autoScroll;
                     
                     // 初始化按钮状态
-                    scrollLockButton.classList.add('active');
+                    if (autoScroll) {
+                        scrollLockButton.classList.add('active');
+                    }
                     
                     function toggleScrollLock() {
                         autoScroll = !autoScroll;
@@ -211,6 +237,16 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                             command: 'clearMessages'
                         });
                     }
+
+                    function limitMessages() {
+                        const messages = messageContainer.children;
+                        if (messages.length > config.maxCount) {
+                            const removeCount = messages.length - config.maxCount;
+                            for (let i = 0; i < removeCount; i++) {
+                                messages[0].remove();
+                            }
+                        }
+                    }
                     
                     window.addEventListener('message', event => {
                         const message = event.data;
@@ -219,6 +255,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                                 const div = document.createElement('div');
                                 div.innerHTML = message.value;
                                 messageContainer.appendChild(div);
+                                limitMessages();
                                 if (autoScroll) {
                                     scrollToBottom();
                                 }
@@ -234,28 +271,63 @@ export class MessageProvider implements vscode.WebviewViewProvider {
     }
 
     public addMessage(message: string) {
-        const timestamp = new Date().toLocaleTimeString();
-        let type = 'info';
-        let icon = '💬';
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const timeFormat = config.get<string>('messages.timeFormat', 'HH:mm:ss');
+        const showIcons = config.get<boolean>('messages.showIcons', true);
+        const maxCount = config.get<number>('messages.maxCount', 1000);
 
-        // 根据消息内容判断类型
-        if (message.includes('成功') || message.includes('完成')) {
-            type = 'success';
-            icon = '✅';
-        } else if (message.includes('错误') || message.includes('失败')) {
-            type = 'error';
-            icon = '❌';
-        } else if (message.includes('警告') || message.includes('注意')) {
-            type = 'warning';
-            icon = '⚠️';
-        } else if (message.includes('系统') || message.includes('初始化')) {
-            type = 'system';
-            icon = '🔧';
+        // 限制消息数量
+        if (this._messages.length >= maxCount) {
+            this._messages = this._messages.slice(-maxCount + 1);
         }
 
-        const formattedMessage = `<div class="message ${type}">
+        const now = new Date();
+        let timestamp = '';
+        
+        switch (timeFormat) {
+            case 'HH:mm':
+                timestamp = now.toLocaleTimeString('zh-CN', { 
+                    hour: '2-digit', 
+                    minute: '2-digit'
+                });
+                break;
+            case 'hh:mm:ss a':
+                timestamp = now.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                break;
+            case 'YYYY-MM-DD HH:mm:ss':
+                timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('zh-CN')}`;
+                break;
+            default: // HH:mm:ss
+                timestamp = now.toLocaleTimeString('zh-CN');
+                break;
+        }
+
+        let type = 'info';
+        let extraClass = '';
+
+        if (message.includes('成功') || message.includes('完成')) {
+            type = 'success';
+        } else if (message.includes('错误') || message.includes('失败')) {
+            type = 'error';
+        } else if (message.includes('警告') || message.includes('注意')) {
+            type = 'warning';
+        } else if (message.includes('系统') || message.includes('初始化')) {
+            type = 'system';
+        }
+
+        // 检查是否是临时消息(015协议)
+        if (message.includes('更新中') || message.includes('维护中')) {
+            extraClass = ' temp-message';
+        }
+
+        const formattedMessage = `<div class="message ${type}${extraClass}">
             <span class="timestamp">[${timestamp}]</span>
-            <span class="icon-container">${icon}</span>
+            ${showIcons ? `<span class="icon-container">💬</span>` : ''}
             <span class="message-content">${message}</span>
         </div>`;
 

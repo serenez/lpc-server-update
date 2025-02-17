@@ -35,11 +35,15 @@ function ensureDirectoryExists(dirPath: string) {
 // 读取配置文件
 function readConfig(): Config {
     try {
+        // 首先读取 VS Code 的设置
+        const vsCodeConfig = vscode.workspace.getConfiguration('gameServerCompiler');
+        const autoCompileOnSave = vsCodeConfig.get<boolean>('compile.autoCompileOnSave');
+        
         if (fs.existsSync(configPath)) {
             const configData = fs.readFileSync(configPath, 'utf8');
             const config = JSON.parse(configData);
             
-            // 确保所有必需字段都存在
+            // 确保所有必需字段都存在，优先使用 VS Code 设置
             return {
                 host: config.host || '',
                 port: config.port || 0,
@@ -49,29 +53,46 @@ function readConfig(): Config {
                 serverKey: config.serverKey || '',
                 compile: {
                     defaultDir: config.compile?.defaultDir || '',
-                    autoCompileOnSave: config.compile?.autoCompileOnSave || false,
+                    // 优先使用 VS Code 设置的值，如果没有则使用配置文件的值
+                    autoCompileOnSave: autoCompileOnSave !== undefined ? autoCompileOnSave : (config.compile?.autoCompileOnSave || false),
                     timeout: config.compile?.timeout || 30000,
                     showDetails: config.compile?.showDetails || true
                 }
             };
         }
+
+        // 如果配置文件不存在，仍然尝试使用 VS Code 设置
+        return {
+            host: '',
+            port: 0,
+            username: '',
+            password: '',
+            rootPath: path.dirname(configPath),
+            serverKey: '',
+            compile: {
+                defaultDir: '',
+                autoCompileOnSave: autoCompileOnSave || false,
+                timeout: 30000,
+                showDetails: true
+            }
+        };
     } catch (error) {
         console.error('读取配置文件失败:', error);
+        return {
+            host: '',
+            port: 0,
+            username: '',
+            password: '',
+            rootPath: path.dirname(configPath),
+            serverKey: '',
+            compile: {
+                defaultDir: '',
+                autoCompileOnSave: false,
+                timeout: 30000,
+                showDetails: true
+            }
+        };
     }
-    return {
-        host: '',
-        port: 0,
-        username: '',
-        password: '',
-        rootPath: path.dirname(configPath),
-        serverKey: '',
-        compile: {
-            defaultDir: '',
-            autoCompileOnSave: false,
-            timeout: 30000,
-            showDetails: true
-        }
-    };
 }
 
 // 保存配置文件
@@ -303,6 +324,8 @@ async function initializeConfig() {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    console.log('正在激活扩展...');
+    
     // 创建两个独立的输出通道
     const outputChannel = vscode.window.createOutputChannel('LPC服务器调试');
     const serverLogChannel = vscode.window.createOutputChannel('LPC服务器日志');
@@ -349,7 +372,7 @@ export async function activate(context: vscode.ExtensionContext) {
             },
             show: () => serverLogChannel.show(false)
         }
-    }, buttonProvider);
+    }, buttonProvider, messageProvider);
 
     // 初始化配置
     if (!await initializeConfig()) {
@@ -367,25 +390,37 @@ export async function activate(context: vscode.ExtensionContext) {
     // 注册命令
     const commands = {
         'game-server-compiler.connect': async () => {
+            outputChannel.appendLine('==== 执行连接命令 ====');
             try {
+                outputChannel.appendLine(`当前连接状态: ${tcpClient.isConnected()}`);
+                outputChannel.appendLine(`当前登录状态: ${tcpClient.isLoggedIn()}`);
+
                 if (tcpClient.isConnected()) {
                     const disconnect = await vscode.window.showQuickPick(['是', '否'], {
                         placeHolder: '服务器已连接，是否断开连接？'
                     });
                     if (disconnect === '是') {
+                        outputChannel.appendLine('用户选择断开连接');
                         tcpClient.disconnect();
                         messageProvider?.addMessage('已断开服务器连接');
+                        await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isConnected', false);
+                        await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', false);
                     }
                     return;
                 }
 
+                outputChannel.appendLine('检查配置...');
                 if (!await checkAndUpdateConfig()) {
+                    outputChannel.appendLine('配置检查失败');
                     return;
                 }
 
                 const config = readConfig();
+                outputChannel.appendLine(`准备连接到服务器: ${config.host}:${config.port}`);
                 messageProvider?.addMessage('正在连接服务器...');
+                
                 await tcpClient.connect(config.host, config.port);
+                outputChannel.appendLine('连接命令已发送');
                 
                 // 等待登录结果
                 const loginTimeout = 10000; // 10秒登录超时
@@ -393,6 +428,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 
                 while (Date.now() - startTime < loginTimeout) {
                     if (tcpClient.isLoggedIn()) {
+                        outputChannel.appendLine('登录成功');
                         messageProvider?.addMessage('角色登录成功');
                         // 更新登录状态上下文
                         await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', true);
@@ -405,11 +441,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
                 
                 // 登录超时，直接断开连接
+                outputChannel.appendLine('登录超时');
                 messageProvider?.addMessage('登录超时，请重新连接');
                 await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', false);
                 tcpClient.disconnect();
                 
             } catch (error) {
+                outputChannel.appendLine(`连接错误: ${error}`);
                 const errorMsg = `${error}`;
                 messageProvider?.addMessage(errorMsg);
                 vscode.window.showErrorMessage(errorMsg);
@@ -417,6 +455,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.compileCurrentFile': async () => {
+            outputChannel.appendLine('==== 执行编译当前文件命令 ====');
             if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
                 vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
@@ -430,15 +469,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
             try {
                 const filePath = editor.document.uri.fsPath;
+                outputChannel.appendLine(`原始文件路径: ${filePath}`);
                 const mudPath = convertToMudPath(filePath);
+                outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
                 tcpClient.sendUpdateCommand(mudPath);
                 messageProvider?.addMessage(`正在编译文件: ${mudPath}`);
             } catch (error) {
+                outputChannel.appendLine(`编译文件失败: ${error}`);
                 messageProvider?.addMessage(`编译文件失败: ${error}`);
                 vscode.window.showErrorMessage('编译文件失败');
             }
         },
         'game-server-compiler.compileDir': async () => {
+            outputChannel.appendLine('==== 执行编译目录命令 ====');
             if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
                 vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
@@ -455,6 +498,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
             if (path) {
                 try {
+                    outputChannel.appendLine(`编译目录: ${path}`);
                     // 如果是新的目录路径,保存为默认值
                     if (path !== config.compile.defaultDir) {
                         await saveConfig({ 
@@ -492,34 +536,82 @@ export async function activate(context: vscode.ExtensionContext) {
                     await Promise.race([compilePromise, timeoutPromise]);
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : String(error);
+                    outputChannel.appendLine(`编译目录失败: ${errorMessage}`);
                     messageProvider?.addMessage(`编译目录失败: ${errorMessage}`);
                     vscode.window.showErrorMessage(`编译目录失败: ${errorMessage}`);
                 }
             }
         },
-        'game-server-compiler.sendCommand': async () => {
+        'game-server-compiler.sendCommand': async (command?: string) => {
+            outputChannel.appendLine('==== 执行发送命令 ====');
             if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
                 vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
             }
 
-            const command = await vscode.window.showInputBox({
-                prompt: '输入要发送的命令',
-                placeHolder: '例如: update /path/to/file',
-                ignoreFocusOut: true
-            });
-
-            if (command) {
-                try {
+            try {
+                // 如果传入了command参数,直接执行
+                if (command) {
+                    outputChannel.appendLine(`发送命令: ${command}`);
                     tcpClient.sendCustomCommand(command);
                     messageProvider?.addMessage(`发送命令: ${command}`);
-                } catch (error) {
-                    messageProvider?.addMessage(`发送命令失败: ${error}`);
-                    vscode.window.showErrorMessage(`发送命令失败: ${error}`);
+                    return;
                 }
+
+                // 否则弹出输入框
+                const inputCommand = await vscode.window.showInputBox({
+                    prompt: '输入要发送的命令',
+                    placeHolder: '例如: update /path/to/file',
+                    ignoreFocusOut: true
+                });
+
+                if (inputCommand) {
+                    outputChannel.appendLine(`发送命令: ${inputCommand}`);
+                    tcpClient.sendCustomCommand(inputCommand);
+                    messageProvider?.addMessage(`发送命令: ${inputCommand}`);
+                }
+            } catch (error) {
+                outputChannel.appendLine(`发送命令失败: ${error}`);
+                messageProvider?.addMessage(`发送命令失败: ${error}`);
+                vscode.window.showErrorMessage(`发送命令失败: ${error}`);
+            }
+        },
+        'game-server-compiler.eval': async (code?: string) => {
+            outputChannel.appendLine('==== 执行Eval命令 ====');
+            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
+                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
+                return;
+            }
+
+            try {
+                // 如果传入了code参数,直接执行
+                if (code) {
+                    outputChannel.appendLine(`执行Eval: ${code}`);
+                    tcpClient.sendEvalCommand(code);
+                    messageProvider?.addMessage(`执行Eval: ${code}`);
+                    return;
+                }
+
+                // 否则弹出输入框
+                const inputCode = await vscode.window.showInputBox({
+                    prompt: '输入要执行的代码',
+                    placeHolder: '例如: users()',
+                    ignoreFocusOut: true
+                });
+
+                if (inputCode) {
+                    outputChannel.appendLine(`执行Eval: ${inputCode}`);
+                    tcpClient.sendEvalCommand(inputCode);
+                    messageProvider?.addMessage(`执行Eval: ${inputCode}`);
+                }
+            } catch (error) {
+                outputChannel.appendLine(`执行Eval失败: ${error}`);
+                messageProvider?.addMessage(`执行Eval失败: ${error}`);
+                vscode.window.showErrorMessage(`执行Eval失败: ${error}`);
             }
         },
         'game-server-compiler.restart': async () => {
+            outputChannel.appendLine('==== 执行重启命令 ====');
             if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
                 vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
                 return;
@@ -534,10 +626,12 @@ export async function activate(context: vscode.ExtensionContext) {
             
             if (confirm === '确定') {
                 try {
+                    outputChannel.appendLine('发送重启命令');
                     tcpClient.sendRestartCommand();
                     messageProvider?.addMessage('已发送重启命令');
                     vscode.window.showInformationMessage('已发送重启命令');
                 } catch (error) {
+                    outputChannel.appendLine(`发送重启命令失败: ${error}`);
                     messageProvider?.addMessage(`发送重启命令失败: ${error}`);
                     vscode.window.showErrorMessage(`发送重启命令失败: ${error}`);
                 }
@@ -547,6 +641,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 注册所有命令
     Object.entries(commands).forEach(([commandId, handler]) => {
+        console.log(`注册命令: ${commandId}`);
         context.subscriptions.push(
             vscode.commands.registerCommand(commandId, handler)
         );
@@ -557,21 +652,40 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.workspace.onDidSaveTextDocument(async (document) => {
             const config = readConfig();
             
+            // 添加调试日志
+            outputChannel.appendLine('==== 文件保存事件触发 ====');
+            outputChannel.appendLine(`保存的文件: ${document.fileName}`);
+            outputChannel.appendLine(`自动编译设置: ${config.compile.autoCompileOnSave}`);
+            outputChannel.appendLine(`连接状态: ${tcpClient.isConnected()}`);
+            outputChannel.appendLine(`登录状态: ${tcpClient.isLoggedIn()}`);
+            
             if (config.compile.autoCompileOnSave && tcpClient.isConnected() && tcpClient.isLoggedIn()) {
-                // 检查文件是否是.c或.h文件
-                if (document.fileName.endsWith('.c') || document.fileName.endsWith('.h')) {
+                outputChannel.appendLine('条件检查通过，准备编译');
+                // 只编译.c文件
+                if (document.fileName.endsWith('.c')) {
                     try {
                         const filePath = document.uri.fsPath;
+                        outputChannel.appendLine(`原始文件路径: ${filePath}`);
                         const mudPath = convertToMudPath(filePath);
+                        outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
                         messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
                         tcpClient.sendUpdateCommand(mudPath);
+                        outputChannel.appendLine('编译命令已发送');
                     } catch (error) {
+                        outputChannel.appendLine(`编译失败: ${error}`);
                         messageProvider?.addMessage(`自动编译失败: ${error}`);
                     }
+                } else {
+                    outputChannel.appendLine('不是.c文件，跳过编译');
                 }
+            } else {
+                outputChannel.appendLine('条件检查未通过，跳过编译');
             }
+            outputChannel.appendLine('==== 文件保存事件处理完成 ====\n');
         })
     );
+
+    console.log('扩展激活完成');
 }
 
 export function deactivate() {

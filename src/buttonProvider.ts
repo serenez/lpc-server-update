@@ -12,13 +12,26 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _isConnected: boolean = false;
     private _isLoggedIn: boolean = false;
+    private _isInitialized: boolean = false;
     private _disposables: vscode.Disposable[] = [];
     private _customCommands: CustomCommand[] = [];
     private _customEvals: CustomCommand[] = [];
 
     constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
-        this.loadCustomCommands();
+        this.initializeAsync();
+    }
+
+    private async initializeAsync() {
+        try {
+            await this.loadCustomCommands();
+            this._isInitialized = true;
+            this.updateView();
+            console.log('ButtonProvider initialization completed');
+        } catch (error) {
+            console.error('ButtonProvider initialization failed:', error);
+            this.messageProvider.addMessage('❌ 插件初始化失败，请重启VS Code');
+        }
     }
 
     private loadCustomCommands() {
@@ -158,6 +171,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             console.log('Updating view with state:', {
                 connected: this._isConnected,
                 loggedIn: this._isLoggedIn,
+                initialized: this._isInitialized,
                 customCommands: this._customCommands,
                 customEvals: this._customEvals
             });
@@ -165,6 +179,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 type: 'updateState', 
                 connected: this._isConnected,
                 loggedIn: this._isLoggedIn,
+                initialized: this._isInitialized,
                 customCommands: this._customCommands,
                 customEvals: this._customEvals
             });
@@ -303,6 +318,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             .add-button:hover {
                 background: var(--vscode-button-secondaryHoverBackground);
             }
+            .button-disabled {
+                opacity: 0.5;
+                cursor: not-allowed !important;
+            }
         `;
 
         return `<!DOCTYPE html>
@@ -387,6 +406,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         let state = {
                             connected: ${this._isConnected},
                             loggedIn: ${this._isLoggedIn},
+                            initialized: ${this._isInitialized},
                             customCommands: ${JSON.stringify(this._customCommands)},
                             customEvals: ${JSON.stringify(this._customEvals)}
                         };
@@ -533,23 +553,30 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         function updateButtons() {
                             Object.keys(commands).forEach(id => {
                                 const button = document.getElementById(id);
-                                if (button && id !== 'connect') {
-                                    button.disabled = !state.connected || !state.loggedIn;
+                                if (button) {
+                                    if (id === 'connect') {
+                                        // 连接按钮的处理
+                                        button.disabled = !state.initialized;
+                                        button.className = state.initialized ? 
+                                            (state.connected ? 'connected' : '') : 
+                                            'button-disabled';
+                                        // 更新连接按钮的文字
+                                        const textSpan = button.querySelector('span:last-child');
+                                        if (textSpan) {
+                                            textSpan.textContent = state.connected ? '断开服务器' : '连接游戏服务器';
+                                        }
+                                    } else {
+                                        // 其他按钮的处理
+                                        button.disabled = !state.initialized || !state.connected || !state.loggedIn;
+                                    }
                                 }
                             });
-
-                            const connectButton = document.getElementById('connect');
-                            if (connectButton) {
-                                connectButton.className = state.connected ? 'connected' : '';
-                                connectButton.querySelector('span:last-child').textContent = 
-                                    state.connected ? '断开服务器' : '连接游戏服务器';
-                            }
 
                             // 更新下拉菜单状态
                             ['customCommandsDropdown', 'customEvalsDropdown'].forEach(id => {
                                 const button = document.getElementById(id);
                                 if (button) {
-                                    button.disabled = !state.connected || !state.loggedIn;
+                                    button.disabled = !state.initialized || !state.connected || !state.loggedIn;
                                 }
                             });
                         }
@@ -563,6 +590,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                 state = {
                                     connected: message.connected,
                                     loggedIn: message.loggedIn,
+                                    initialized: message.initialized,
                                     customCommands: message.customCommands || [],
                                     customEvals: message.customEvals || []
                                 };

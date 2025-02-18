@@ -57,6 +57,8 @@ export class TcpClient implements IDisposable {
     private errorLine: number = 0;
     private errorMessage: string = '';
     private isIgnoringStackTrace: boolean = false;
+    private commandTimeout: number = 30000; // 30秒超时
+    private pendingCommand: boolean = false;
 
     constructor(
         outputChannel: vscode.OutputChannel,
@@ -753,19 +755,64 @@ export class TcpClient implements IDisposable {
         }
     }
 
-    private sendCommand(command: string, commandName: string = '命令') {
+    private async executeCommand(command: string, commandName: string = '命令'): Promise<void> {
+        if (this.pendingCommand) {
+            this.log('有命令正在执行中，请稍后再试', LogLevel.INFO);
+            throw new Error('命令执行中');
+        }
+
+        try {
+            this.pendingCommand = true;
+            this.log(`发送${commandName}: ${command}`, LogLevel.DEBUG);
+
+            await new Promise<void>((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    reject(new Error('命令执行超时'));
+                }, this.commandTimeout);
+
+                try {
+                    this.socket?.write(command + '\n', () => {
+                        clearTimeout(timeoutId);
+                        resolve();
+                    });
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    reject(error);
+                }
+            });
+
+            this.log(`${commandName}发送完成`, LogLevel.DEBUG);
+        } finally {
+            this.pendingCommand = false;
+        }
+    }
+
+    private async sendCommand(command: string, commandName: string = '命令') {
         if (!this.checkState()) {
             return;
         }
         
         try {
-            this.log(`发送${commandName}: ${command}`, LogLevel.DEBUG);
-            this.socket?.write(command + '\n');
-            this.log(`${commandName}发送完成`, LogLevel.DEBUG);
-        } catch (error) {
-            const errorMessage = `发送${commandName}失败: ${error}`;
-            this.log(errorMessage, LogLevel.ERROR);
-            vscode.window.showErrorMessage(errorMessage);
+            await this.executeCommand(command, commandName);
+        } catch (error: any) { // 显式指定 error 类型
+            if (error instanceof Error) {
+                if (error.message === '命令执行中') {
+                    this.messageProvider?.addMessage('⚠️ 请等待当前命令执行完成');
+                } else if (error.message === '命令执行超时') {
+                    this.log('命令执行超时，正在重置状态', LogLevel.ERROR);
+                    this.messageProvider?.addMessage('❌ 命令执行超时，请重试');
+                    // 重置状态
+                    this.pendingCommand = false;
+                } else {
+                    const errorMessage = `发送${commandName}失败: ${error.message}`;
+                    this.log(errorMessage, LogLevel.ERROR);
+                    this.messageProvider?.addMessage(`❌ ${errorMessage}`);
+                }
+            } else {
+                const errorMessage = `发送${commandName}失败: 未知错误`;
+                this.log(errorMessage, LogLevel.ERROR);
+                this.messageProvider?.addMessage(`❌ ${errorMessage}`);
+            }
         }
     }
 
@@ -817,46 +864,14 @@ export class TcpClient implements IDisposable {
     }
 
     public disconnect() {
-        this.log('==== 开始主动断开连接 ====', LogLevel.INFO);
-        
-        this.stopReconnect();
-        
+        this.resetState();
         if (this.socket) {
-            this.log('正在关闭socket连接...', LogLevel.INFO);
-            this.socket.removeAllListeners();
             this.socket.destroy();
             this.socket = null;
         }
-        
-        this.lastHost = '';
-        this.lastPort = 0;
-        this.reconnectAttempts = 0;
-        this.versionVerified = false;
         this.connected = false;
         this.loggedIn = false;
-        this.isFirstData = true;
-        this.isCollectingResult = false;
-        this.resultBuffer = '';
-        this._isReconnecting = false;
-        
-        this.isCollectingMuy = false;
-        this.muyBuffer = '';
-        
-        if (this.reconnectTimer) {
-            clearInterval(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        if (this.retryTimer) {
-            clearTimeout(this.retryTimer);
-            this.retryTimer = null;
-        }
-        
-        this.buttonProvider?.updateConnectionState(false);
-        this.buttonProvider?.updateButtonState(false);
-        
-        this.setConnectionState(false);
-        
-        this.log('==== 主动断开连接完成 ====', LogLevel.INFO);
+        this.buttonProvider.updateConnectionState(false);
     }
 
     isConnected(): boolean {
@@ -1530,5 +1545,15 @@ export class TcpClient implements IDisposable {
         }
         this.log(`发送eval命令: ${code}`, LogLevel.DEBUG);
         this.sendCommand(`eval ${code}`, 'Eval命令');
+    }
+
+    // 添加状态重置方法
+    public resetState() {
+        this.pendingCommand = false;
+        this.isCollectingError = false;
+        this.firstErrorFile = '';
+        this.errorLine = 0;
+        this.errorMessage = '';
+        this.clearDiagnostics();
     }
 } 

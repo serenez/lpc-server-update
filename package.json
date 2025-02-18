@@ -35,8 +35,7 @@
     "vscode": "^1.60.0"
   },
   "activationEvents": [
-    "onView:game-server-messages",
-    "onView:game-server-buttons"
+    "*"
   ],
   "contributes": {
     "configuration": {

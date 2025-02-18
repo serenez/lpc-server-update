@@ -455,7 +455,7 @@ export async function activate(context: vscode.ExtensionContext) {
     
     // 创建视图提供者
     messageProvider = new MessageProvider(context.extensionUri);
-    buttonProvider = new ButtonProvider(context.extensionUri);
+    buttonProvider = new ButtonProvider(context.extensionUri, messageProvider);
 
     // 输出初始化日志
     outputChannel.appendLine('========== LPC服务器连接器初始化 ==========');
@@ -507,7 +507,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 将输出面板添加到订阅中
     context.subscriptions.push(outputChannel);
 
-    // 注册命令
+    // 注册所有命令
     const commands = {
         'game-server-compiler.connect': async () => {
             outputChannel.appendLine('==== 执行连接命令 ====');

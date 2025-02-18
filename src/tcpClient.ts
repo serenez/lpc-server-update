@@ -6,6 +6,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ButtonProvider } from './buttonProvider';
 import * as iconv from 'iconv-lite';
+import { MessageParser } from './utils/messageParser';
+import { IDisposable } from './interfaces/IDisposable';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -17,7 +19,7 @@ interface MessageChannels {
     server: MessageOutput;
 }
 
-export class TcpClient {
+export class TcpClient implements IDisposable {
     private socket: net.Socket | null = null;
     private connected: boolean = false;
     private loggedIn: boolean = false;
@@ -44,6 +46,9 @@ export class TcpClient {
     private muyBuffer: string = '';
     private isCollectingMuy: boolean = false;
     private encoding: string = 'UTF8';
+    private messageBuffer: string[] = [];
+    private bufferTimer: NodeJS.Timeout | null = null;
+    private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
 
     constructor(
         channels: MessageChannels,
@@ -60,9 +65,10 @@ export class TcpClient {
             }
         });
         this.initSocket();
+        this.initMessageBuffer();
     }
 
-  private initSocket() {
+    private initSocket() {
         if (this.socket) {
             this.log('清理现有socket连接', LogLevel.DEBUG);
             this.socket.removeAllListeners();
@@ -89,27 +95,25 @@ export class TcpClient {
           this.log('已连接到游戏服务器', LogLevel.INFO);
         });
 
-        let buffer = Buffer.alloc(0);
+        // 使用MessageParser创建空buffer
+        let buffer = MessageParser.createEmptyBuffer();
         
         this.socket.on('data', (data) => {
             try {
-                // 将收到的数据添加到buffer
-                buffer = Buffer.concat([buffer, data]);
+                // 使用MessageParser合并buffer
+                buffer = MessageParser.concatBuffers([buffer, data]);
                 
-                // 使用配置的编码解码数据
-                const decodedData = this.decodeData(buffer);
+                // 使用MessageParser解码数据
+                const decodedData = MessageParser.bufferToString(buffer, this.encoding);
                 
-                // 检查是否有完整的消息(以\n结尾)
                 if (decodedData.endsWith('\n')) {
-                    // 分割消息
                     const messages = decodedData.split('\n');
                     
-                    // 清空buffer
-                    buffer = Buffer.alloc(0);
+                    // 使用MessageParser创建空buffer
+                    buffer = MessageParser.createEmptyBuffer();
                     
-                    // 处理每条完整的消息
                     for (let message of messages) {
-                        if (message) { // 忽略空消息
+                        if (message) {
                             if (message.startsWith(`${this.ESC}[2;37;0m`)) {
                                 message = message.replace(`${this.ESC}[2;37;0m`, '');
                             }
@@ -123,10 +127,9 @@ export class TcpClient {
                         }
                     }
                 }
-                // 如果消息不完整，继续等待更多数据
             } catch (error) {
                 this.log(`消息处理错误: ${error}`, LogLevel.ERROR);
-                buffer = Buffer.alloc(0);
+                buffer = MessageParser.createEmptyBuffer();
                 this.resultBuffer = '';
                 this.isCollectingResult = false;
             }
@@ -206,7 +209,6 @@ export class TcpClient {
 
     private processMessage(message: string) {
         try {
-
             // 如果正在收集MUY消息
             if (this.isCollectingMuy) {
                 this.muyBuffer += message;
@@ -568,7 +570,7 @@ export class TcpClient {
         this._isReconnecting = false;
     }
 
-    public async connect(host: string, port: number): Promise<void> {
+    async connect(host: string, port: number): Promise<void> {
         if (this.connected) {
             this.log('已经连接到服务器', LogLevel.INFO);
             return;
@@ -650,8 +652,8 @@ export class TcpClient {
             const key = this.sha1(config.serverKey);
             this.log('发送验证密钥...', LogLevel.DEBUG);
             
-            // 使用encodeData进行编码转换
-            const encodedKey = this.encodeData(key + '\n');
+            // 使用MessageParser进行编码
+            const encodedKey = MessageParser.stringToBuffer(key + '\n', this.encoding);
             this.socket?.write(encodedKey, () => {
                 this.log('验证密钥发送完成', LogLevel.DEBUG);
             });
@@ -684,8 +686,8 @@ export class TcpClient {
             
             this.log(`发送登录信息: ${loginString}`, LogLevel.INFO);
             
-            // 使用encodeData进行编码转换
-            const encodedData = this.encodeData(loginString);
+            // 使用MessageParser进行编码
+            const encodedData = MessageParser.stringToBuffer(loginString, this.encoding);
             this.socket?.write(encodedData, () => {
                 this.log('登录信息发送完成', LogLevel.DEBUG);
             });
@@ -715,8 +717,8 @@ export class TcpClient {
         try {
             this.log(`发送${commandName}: ${command}`, LogLevel.DEBUG);
             
-            // 使用encodeData进行编码转换
-            const encodedCommand = this.encodeData(command + '\n');
+            // 使用MessageParser进行编码
+            const encodedCommand = MessageParser.stringToBuffer(command + '\n', this.encoding);
             this.socket.write(encodedCommand);
             
             this.log(`${commandName}发送完成`, LogLevel.DEBUG);
@@ -725,18 +727,6 @@ export class TcpClient {
             this.log(`发送${commandName}失败: ${error}`, LogLevel.ERROR);
             return false;
         }
-    }
-
-    sendCustomCommand(command: string) {
-        this.sendCommand(command, '自定义命令');
-    }
-
-    sendEvalCommand(code: string) {
-        this.sendCommand(`eval return ${code}`, 'Eval命令');
-    }
-
-    sendRestartCommand() {
-        this.sendCommand('shutdown', '重启命令');
     }
 
     async sendUpdateCommand(filePath: string) {
@@ -1048,12 +1038,8 @@ export class TcpClient {
                 this.buttonProvider.updateConnectionState(isConnected);
             }
             
-            // 更新命令上下文
+            // 只更新命令上下文，移除配置更新
             await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isConnected', isConnected);
-            
-            // 更新配置
-            const config = vscode.workspace.getConfiguration('gameServerCompiler');
-            await config.update('isConnected', isConnected, true);
             
             this.handleStatusChange(
                 isConnected ? 'connected' : 'disconnected',
@@ -1206,46 +1192,11 @@ export class TcpClient {
     }
 
     private decodeData(data: Buffer): string {
-        try {
-            // 记录原始数据的十六进制形式用于调试
-            if (this.encoding.toUpperCase() === 'GBK') {
-                // 使用GBK解码数据
-                const text = iconv.decode(data, 'GBK');
-                this.log(`GBK解码后的文本: ${text}`, LogLevel.DEBUG);
-                
-                // 将GBK文本转换为UTF8
-                const utf8Buffer = iconv.encode(text, 'UTF8');
-                const utf8Text = iconv.decode(utf8Buffer, 'UTF8');
-                this.log(`转换为UTF8后的文本: ${utf8Text}`, LogLevel.DEBUG);
-                
-                return utf8Text;
-            }
-            // 如果是UTF8编码，直接解码
-            const text = iconv.decode(data, 'UTF8');
-            return text;
-        } catch (error) {
-            this.log(`解码数据失败: ${error}`, LogLevel.ERROR);
-            return data.toString();
-        }
+        return MessageParser.bufferToString(data, this.encoding);
     }
 
     private encodeData(text: string): Buffer {
-        try {
-            if (this.encoding.toUpperCase() === 'GBK') {
-                // 如果当前是GBK模式，需要将UTF8文本转换为GBK
-                const gbkBuffer = iconv.encode(text, 'GBK');
-                this.log(`文本已编码为GBK，长度: ${gbkBuffer.length}字节`, LogLevel.DEBUG);
-                return gbkBuffer;
-            }
-            
-            // 如果是UTF8模式，直接编码
-            const buffer = iconv.encode(text, 'UTF8');
-            this.log(`文本已编码为UTF8，长度: ${buffer.length}字节`, LogLevel.DEBUG);
-            return buffer;
-        } catch (error) {
-            this.log(`编码失败: ${error}`, LogLevel.ERROR);
-            return Buffer.from(text);
-        }
+        return MessageParser.stringToBuffer(text, this.encoding);
     }
 
     private parseLPCMapping(content: string): any {
@@ -1480,5 +1431,70 @@ export class TcpClient {
         const key = pair.substring(0, colonIndex).trim();
         const value = pair.substring(colonIndex + 1).trim();
         return [key, value];
+    }
+
+    private processMessageBuffer() {
+        if (this.messageBuffer.length > 0) {
+            const messages = this.messageBuffer.slice();
+            this.messageBuffer = [];
+            messages.forEach(msg => this.processMessage(msg));
+        }
+    }
+
+    private initMessageBuffer() {
+        this.bufferTimer = setInterval(() => {
+            this.processMessageBuffer();
+        }, this.BUFFER_FLUSH_INTERVAL);
+    }
+
+    private encodeMessage(message: string): Buffer {
+        try {
+            const encodedMessage = iconv.encode(message + '\n', this.encoding);
+            this.log(`消息编码(${this.encoding}): ${message}`, LogLevel.DEBUG);
+            return encodedMessage;
+        } catch (error) {
+            this.log(`消息编码失败: ${error}`, LogLevel.ERROR);
+            throw error;
+        }
+    }
+
+    public async sendCustomCommand(command: string): Promise<void> {
+        if (!this.isConnected()) {
+            throw new Error('未连接到服务器');
+        }
+        if (!this.isLoggedIn()) {
+            throw new Error('未登录角色');
+        }
+
+        try {
+            const buffer = this.encodeMessage(command);
+            this.socket?.write(buffer);
+            this.log(`发送自定义命令: ${command}`, LogLevel.INFO);
+        } catch (error) {
+            this.log(`发送自定义命令失败: ${error}`, LogLevel.ERROR);
+            throw error;
+        }
+    }
+
+    public async sendEvalCommand(code: string): Promise<void> {
+        await this.sendCustomCommand(`eval return ${code}`);
+    }
+
+    public async sendRestartCommand(): Promise<void> {
+        await this.sendCustomCommand('shutdown');
+    }
+
+    dispose() {
+        if (this.bufferTimer) {
+            clearInterval(this.bufferTimer);
+        }
+        if (this.socket) {
+            this.socket.destroy();
+            this.socket = null;
+        }
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
     }
 } 

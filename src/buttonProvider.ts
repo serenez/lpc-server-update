@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { MessageProvider } from './messageProvider';
 
 interface CustomCommand {
     name: string;
@@ -15,7 +16,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _customCommands: CustomCommand[] = [];
     private _customEvals: CustomCommand[] = [];
 
-    constructor(private readonly _extensionUri: vscode.Uri) {
+    constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
         this.loadCustomCommands();
     }
@@ -172,7 +173,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview) {
+    private _getHtmlForWebview(webview: vscode.Webview): string {
         const buttonStyle = `
             body {
                 padding: 10px;
@@ -183,9 +184,12 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             .button-row {
                 display: flex;
                 gap: 8px;
+                width: 100%;
             }
             .button-row button {
                 flex: 1;
+                min-width: 0;  /* 防止按钮溢出 */
+                white-space: nowrap;  /* 防止文字换行 */
             }
             button {
                 padding: 8px 16px;
@@ -239,17 +243,35 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 border-radius: 4px;
                 margin-top: 4px;
                 overflow: hidden;
+                padding: 4px;
+                width: 100%;
+                box-sizing: border-box;
             }
             .dropdown.open .dropdown-content {
                 display: block;
             }
+            .dropdown-items-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+                width: 100%;
+                box-sizing: border-box;
+                padding: 0;
+                margin: 0;
+            }
             .dropdown-item {
+                flex: 0 0 calc(50% - 2px);
                 display: flex;
                 align-items: center;
                 padding: 6px 12px;
                 gap: 8px;
                 cursor: pointer;
                 transition: all 0.2s ease;
+                box-sizing: border-box;
+                background: var(--vscode-button-secondaryBackground);
+                border-radius: 4px;
+                min-height: 32px;
+                flex-shrink: 0;
             }
             .dropdown-item:hover {
                 background: var(--vscode-list-hoverBackground);
@@ -264,12 +286,19 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 opacity: 1;
             }
             .add-button {
+                flex: 0 0 calc(50% - 8px);
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 padding: 6px 12px;
                 background: var(--vscode-button-secondaryBackground);
                 color: var(--vscode-button-secondaryForeground);
                 border: 1px dashed var(--vscode-button-border);
                 margin: 4px;
                 border-radius: 4px;
+                min-height: 32px;
+                flex-shrink: 0;
+                cursor: pointer;
             }
             .add-button:hover {
                 background: var(--vscode-button-secondaryHoverBackground);
@@ -302,17 +331,19 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         <span style="margin-left: auto">▼</span>
                     </button>
                     <div class="dropdown-content" id="customCommandsList">
-                        ${this._customCommands.map((cmd, index) => `
-                            <div class="dropdown-item" data-command="${cmd.command}">
-                                <span class="button-icon">📎</span>
-                                <span>${cmd.name}</span>
-                                <span class="delete-button" data-index="${index}">🗑️</span>
-                            </div>
-                        `).join('')}
-                        <button class="add-button" id="addCustomCommand">
-                            <span class="button-icon">➕</span>
-                            <span>添加自定义命令</span>
-                        </button>
+                        <div class="dropdown-items-container">
+                            ${this._customCommands.map((cmd, index) => `
+                                <div class="dropdown-item" data-command="${cmd.command}">
+                                    <span class="button-icon">📎</span>
+                                    <span>${cmd.name}</span>
+                                    <span class="delete-button" data-index="${index}">🗑️</span>
+                                </div>
+                            `).join('')}
+                            <button class="add-button" id="addCustomCommand">
+                                <span class="button-icon">➕</span>
+                                <span>添加自定义命令</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -323,17 +354,19 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         <span style="margin-left: auto">▼</span>
                     </button>
                     <div class="dropdown-content" id="customEvalsList">
-                        ${this._customEvals.map((cmd, index) => `
-                            <div class="dropdown-item" data-command="${cmd.command}">
-                                <span class="button-icon">📎</span>
-                                <span>${cmd.name}</span>
-                                <span class="delete-button" data-index="${index}">🗑️</span>
-                            </div>
-                        `).join('')}
-                        <button class="add-button" id="addCustomEval">
-                            <span class="button-icon">➕</span>
-                            <span>添加Eval命令</span>
-                        </button>
+                        <div class="dropdown-items-container">
+                            ${this._customEvals.map((cmd, index) => `
+                                <div class="dropdown-item" data-command="${cmd.command}">
+                                    <span class="button-icon">📎</span>
+                                    <span>${cmd.name}</span>
+                                    <span class="delete-button" data-index="${index}">🗑️</span>
+                                </div>
+                            `).join('')}
+                            <button class="add-button" id="addCustomEval">
+                                <span class="button-icon">➕</span>
+                                <span>添加自定义Eval</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -341,11 +374,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <span class="button-icon">🔃</span>
                     <span>重启服务器</span>
                 </button>
+
                 <div class="divider"></div>
                 <button id="connect" class="${this._isConnected ? 'connected' : ''}">
                     <span class="button-icon">🔌</span>
                     <span>${this._isConnected ? '断开服务器' : '连接游戏服务器'}</span>
                 </button>
+
                 <script>
                     (function() {
                         const vscode = acquireVsCodeApi();

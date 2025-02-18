@@ -21,8 +21,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
     private _messages: string[] = [];
     private readonly _extensionUri: vscode.Uri;
 
-    constructor(extensionUri: vscode.Uri) {
-        this._extensionUri = extensionUri;
+    constructor(uri: vscode.Uri) {
+        this._extensionUri = uri;
     }
 
     private async handleEncodingChange(currentEncoding: string) {
@@ -107,9 +107,25 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
 
             const configUri = vscode.Uri.file(configPath);
-            await vscode.window.showTextDocument(configUri);
+            const document = await vscode.workspace.openTextDocument(configUri);
+            const editor = await vscode.window.showTextDocument(document);
+
+            // 查找 loginKey 的位置
+            const text = document.getText();
+            const loginKeyMatch = text.match(/"loginKey"\s*:\s*"[^"]*"/);
             
-            this.addMessage('已打开配置文件，您可以编辑 loginKey 字段');
+            if (loginKeyMatch) {
+                const start = document.positionAt(loginKeyMatch.index!);
+                const end = document.positionAt(loginKeyMatch.index! + loginKeyMatch[0].length);
+                
+                // 选中 loginKey 配置
+                editor.selection = new vscode.Selection(start, end);
+                
+                // 滚动到选中位置
+                editor.revealRange(new vscode.Range(start, end));
+            }
+            
+            this.addMessage('已打开配置文件，loginKey 已选中');
         } catch (error) {
             vscode.window.showErrorMessage('打开配置文件失败: ' + error);
         }

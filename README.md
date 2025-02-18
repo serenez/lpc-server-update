@@ -8,7 +8,7 @@
 
 [安装](#安装) • [特性](#特性) • [使用说明](#使用说明) • [配置](#配置) • [常见问题](#常见问题)
 
-</div>
+![](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
 ## 📑 目录
 

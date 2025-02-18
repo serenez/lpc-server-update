@@ -92,7 +92,8 @@ export class TcpClient {
         let buffer = Buffer.alloc(0);
         
         this.socket.on('data', (data) => {
-            try {
+          try {
+              this.log('收到数据'+data, LogLevel.DEBUG);
                 // 将收到的数据添加到buffer
                 buffer = Buffer.concat([buffer, data]);
                 
@@ -631,23 +632,28 @@ export class TcpClient {
     private async sendKey() {
         try {
             const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
-            if (fs.existsSync(configPath)) {
-                const configData = fs.readFileSync(configPath, 'utf8');
-                const fileConfig = JSON.parse(configData);
-                if (fileConfig.serverKey) {
-                    this.log(`从配置文件读取到serverKey`, LogLevel.INFO);
-                    const key = `${this.sha1(fileConfig.serverKey)}\n`;
-                    this.socket?.write(key);
-                    this.log('发送版本验证密钥', LogLevel.INFO);
-                    return;
-                }
+            if (!fs.existsSync(configPath)) {
+                throw new Error('配置文件不存在，请先配置muy-lpc-update.json');
             }
 
-            const errorMsg = '服务器密钥未配置，请在.vscode/muy-lpc-update.json中配置serverKey';
-            this.log(errorMsg, LogLevel.ERROR, true);
-            this.disconnect();
+            const configData = fs.readFileSync(configPath, 'utf8');
+            const config = JSON.parse(configData);
+
+            if (!config.serverKey) {
+                throw new Error('服务器密钥未配置，请在muy-lpc-update.json中配置serverKey');
+            }
+
+            const key = this.sha1(config.serverKey);
+            this.log('发送验证密钥...', LogLevel.DEBUG);
+            
+            // 使用encodeData进行编码转换
+            const encodedKey = this.encodeData(key + '\n');
+            this.socket?.write(encodedKey, () => {
+                this.log('验证密钥发送完成', LogLevel.DEBUG);
+            });
         } catch (error) {
-            this.log(`读取或发送密钥失败: ${error}`, LogLevel.ERROR);
+            const errorMsg = `发送验证密钥失败: ${error}`;
+            this.log(errorMsg, LogLevel.ERROR, true);
             this.disconnect();
         }
     }
@@ -669,9 +675,16 @@ export class TcpClient {
             this.log('开始登录...', LogLevel.INFO);
             this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.INFO);
             
-            const loginString = `${config.username}║${config.password}║zzzz\n`;
-            this.log(`发送登录信息: ${config.username}║${config.password}║zzzz`, LogLevel.INFO);
-            this.socket?.write(loginString, () => {
+            // 根据loginWithEmail配置决定登录信息格式
+            const loginString = config.loginWithEmail ? 
+                `${config.username}║${config.password}║zzzz║zzzz@qq.com\n` :
+                `${config.username}║${config.password}║zzzz\n`;
+            
+            this.log(`发送登录信息: ${loginString}`, LogLevel.INFO);
+            
+            // 使用encodeData进行编码转换
+            const encodedData = this.encodeData(loginString);
+            this.socket?.write(encodedData, () => {
                 this.log('登录信息发送完成', LogLevel.DEBUG);
             });
         } catch (error) {
@@ -693,19 +706,21 @@ export class TcpClient {
         }
 
         if (!this.loggedIn) {
-            this.log('错误: 未登录', LogLevel.ERROR);
-            this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.ERROR);
+            this.log('错误: 未登录到服务器', LogLevel.ERROR);
             return false;
         }
 
         try {
-            // 使用配置的编码进行编码
-            const data = this.encodeData(command + '\n');
-            this.log(`发送命令: ${command}`, LogLevel.INFO);
-            this.socket.write(data);
+            this.log(`发送${commandName}: ${command}`, LogLevel.DEBUG);
+            
+            // 使用encodeData进行编码转换
+            const encodedCommand = this.encodeData(command + '\n');
+            this.socket.write(encodedCommand);
+            
+            this.log(`${commandName}发送完成`, LogLevel.DEBUG);
             return true;
         } catch (error) {
-            this.log(`发送命令失败: ${error}`, LogLevel.ERROR);
+            this.log(`发送${commandName}失败: ${error}`, LogLevel.ERROR);
             return false;
         }
     }
@@ -1134,11 +1149,27 @@ export class TcpClient {
                 const configData = fs.readFileSync(configPath, 'utf8');
                 const config = JSON.parse(configData);
                 
-                // 如果没有encoding配置，设置默认值并保存
+                // 检查并设置默认配置
+                let needsUpdate = false;
+                
+                // 检查编码配置
                 if (!config.encoding) {
                     config.encoding = 'UTF8';
-                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+                    needsUpdate = true;
                     this.log('未找到编码配置，已设置为默认UTF8编码', LogLevel.INFO);
+                }
+                
+                // 检查loginWithEmail配置
+                if (config.loginWithEmail === undefined) {
+                    config.loginWithEmail = false;
+                    needsUpdate = true;
+                    this.log('未找到登录邮箱配置，已设置为默认false', LogLevel.INFO);
+                }
+                
+                // 如果有配置更新，保存到文件
+                if (needsUpdate) {
+                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+                    this.log('配置文件已更新', LogLevel.INFO);
                 }
                 
                 const newEncoding = config.encoding.toUpperCase();

@@ -1,6 +1,5 @@
 # 源代码文件
 .vscode/**
-!.vscode/muy-lpc-update.json
 .vscode-test/**
 src/**
 out/**
@@ -12,6 +11,10 @@ out/**
 .gitattributes
 .git/**
 .github/**
+.yarnrc
+webpack.config.js
+vsc-extension-quickstart.md
+**/tsconfig.json
 
 # 测试和调试文件
 test/**

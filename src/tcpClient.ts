@@ -8,6 +8,7 @@ import { ButtonProvider } from './buttonProvider';
 import * as iconv from 'iconv-lite';
 import { MessageParser } from './utils/messageParser';
 import { IDisposable } from './interfaces/IDisposable';
+import { ConfigManager } from './config/ConfigManager';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -49,6 +50,8 @@ export class TcpClient implements IDisposable {
     private messageBuffer: string[] = [];
     private bufferTimer: NodeJS.Timeout | null = null;
     private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
+    private diagnosticCollection: vscode.DiagnosticCollection | null = null;
+    private configManager: ConfigManager;
 
     constructor(
         channels: MessageChannels,
@@ -58,6 +61,7 @@ export class TcpClient implements IDisposable {
         this.channels = channels;
         this.buttonProvider = buttonProvider;
         this.messageProvider = messageProvider;
+        this.configManager = ConfigManager.getInstance();
         this.config = vscode.workspace.getConfiguration('gameServerCompiler');
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('gameServerCompiler.connection')) {
@@ -66,6 +70,11 @@ export class TcpClient implements IDisposable {
         });
         this.initSocket();
         this.initMessageBuffer();
+        
+        // 添加文件保存监听
+        vscode.workspace.onDidSaveTextDocument(doc => {
+            this.clearDiagnostics();
+        });
     }
 
     private initSocket() {
@@ -207,8 +216,26 @@ export class TcpClient implements IDisposable {
         return result;
     }
 
-    private processMessage(message: string) {
+    private processMessage(message: string): void {
         try {
+            // 处理编译错误消息
+            if (message.startsWith(this.ESC + 'ERR')) {
+                // 修改正则表达式以匹配 "ESC+ERR 编译时段错误：/cmds/wiz/testcmd.c line 126: syntax error" 这样的格式
+                const errorMatch = message.match(/ERR[^\/]*?(\/[^:]+\.c)\s+line\s+(\d+):\s*(.*)/);
+                if (errorMatch) {
+                    const [, filePath, line, errorMessage] = errorMatch;
+                    // 在这里就将行号减1
+                    const lineNumber = parseInt(line) - 1;
+                    this.log(`解析编译错误 - 文件: ${filePath}, 行: ${lineNumber}, 错误: ${errorMessage}`, LogLevel.DEBUG);
+                    this.showCompileError(filePath, lineNumber, errorMessage);  // 传入修正后的行号
+                }
+                const errorText = message.substring(4).trim();
+                this.log(`处理错误消息: ${errorText}`, LogLevel.ERROR);
+                if (this.messageProvider) {
+                    this.messageProvider.addMessage(`❌ ${errorText}`);
+                }
+                return;
+            }
             // 如果正在收集MUY消息
             if (this.isCollectingMuy) {
                 this.muyBuffer += message;
@@ -272,6 +299,15 @@ export class TcpClient implements IDisposable {
                 if (protocolMatch) {
                     const [, protocolCode, content] = protocolMatch;
                     this.processProtocolMessage(protocolCode, content);
+                    return;
+                }
+                // 检查是否是错误消息
+                if (message.startsWith(this.ESC + 'ERR')) {
+                    const errorMessage = message.substring(4).trim();
+                    this.log(`处理错误消息: ${errorMessage}`, LogLevel.ERROR);
+                    if (this.messageProvider) {
+                        this.messageProvider.addMessage(`❌ ${errorMessage}`);
+                    }
                     return;
                 }
                 
@@ -1495,6 +1531,57 @@ export class TcpClient implements IDisposable {
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
+        }
+        if (this.diagnosticCollection) {
+            this.diagnosticCollection.dispose();
+            this.diagnosticCollection = null;
+        }
+    }
+
+    private showCompileError(mudPath: string, line: number, message: string) {
+        try {
+            const config = this.configManager.getConfig();
+            const rootPath = config.rootPath;
+            
+            // 转换MUD路径为本地文件路径
+            const localPath = path.join(rootPath, mudPath);
+            const fileUri = vscode.Uri.file(localPath);
+
+            // 修改这里：将行号减1
+            const lineNumber = line - 1;
+
+            // 创建诊断信息
+            const range = new vscode.Range(
+                new vscode.Position(lineNumber, 0),  // 使用修正后的行号
+                new vscode.Position(lineNumber, Number.MAX_VALUE)  // 使用修正后的行号
+            );
+
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                message,
+                vscode.DiagnosticSeverity.Error
+            );
+
+            // 更新问题面板
+            if (!this.diagnosticCollection) {
+                this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
+            }
+            this.diagnosticCollection.set(fileUri, [diagnostic]);
+
+            // 打开文件并跳转到错误行
+            vscode.workspace.openTextDocument(fileUri).then(doc => {
+                vscode.window.showTextDocument(doc).then(editor => {
+                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                });
+            });
+        } catch (error) {
+            this.log(`显示编译错误失败: ${error}`, LogLevel.ERROR);
+        }
+    }
+
+    private clearDiagnostics() {
+        if (this.diagnosticCollection) {
+            this.diagnosticCollection.clear();
         }
     }
 } 

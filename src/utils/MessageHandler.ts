@@ -1,6 +1,7 @@
 import { LogLevel } from '../log/LogManager';
 import { IDisposable } from '../interfaces/IDisposable';
 import { ConfigError, NetworkError } from '../errors';
+import * as vscode from 'vscode';
 
 export interface MessageProcessor {
     log(message: string, level: LogLevel, context?: string): void;
@@ -128,11 +129,12 @@ export class MessageHandlerImpl implements MessageHandler, IDisposable {
         const match = message.match(/^\x1b(\d{3})(.*)/);
         if (match) {
             const [, code, content] = match;
+            const trimmedContent = content.trim();
             return {
                 type: MessageType.PROTOCOL,
-                content: content.trim(),
+                content: trimmedContent,
                 success: true,
-                data: { code, content }
+                data: { code, content: trimmedContent }
             };
         }
         return {

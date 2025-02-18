@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-Z.0.2-blue.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![Downloads](https://img.shields.io/badge/downloads-1k%2B-brightgreen.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![Rating](https://img.shields.io/badge/rating-★★★★★-gold.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

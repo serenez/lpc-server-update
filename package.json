@@ -1,7 +1,7 @@
 {
   "name": "lpc-server-update",
-  "displayName": "LPC服务器连接器",
-  "version": "1.0.8",
+  "displayName": "LPC-ServerUPDATE MUD工具",
+  "version": "Z.0.2",
   "description": "用于连接和管理LPC游戏服务器的VS Code扩展",
   "publisher": "BUYI-ZMuy",
   "author": {

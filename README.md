@@ -1,5 +1,3 @@
-<div align="center">
-
 # 🎮 LPC服务器连接器
 
 [![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)]()
@@ -27,127 +25,176 @@
 
 ## ⚠️ 使用前注意
 
-### 服务器端准备
+### 🌐 使用环境选择
+
+#### 1️⃣ 服务器本地使用
+```properties
+IP地址设置: localhost 或 127.0.0.1
+适用场景: 直接在游戏服务器上开发
+优势: 最佳性能和稳定性
+```
+
+#### 2️⃣ 远程SSH连接
+```properties
+工具: VS Code Remote-SSH
+IP设置: localhost 或 127.0.0.1
+适用场景: 远程开发但需要本地编辑器体验
+```
+
+#### 3️⃣ 本地开发环境
+> ⚡ **重要**: 必须确保本地与服务器项目文件保持同步！
+
+推荐的同步方案：
+- 🔄 **[SFTP](https://marketplace.visualstudio.com/items?itemName=liximomo.sftp)** (推荐)
+  - VS Code插件
+  - 实时文件同步
+  - 简单易用
+- 🔁 **[Syncthing](https://syncthing.net/)**
+  - 跨平台同步工具
+  - 支持双向同步
+  - 开源免费
+
+> 💡 **工作原理说明**：
+> 
+> 本插件通过登录MUD内的巫师账号来执行相关命令。因此，要确保：
+> 1. 在服务器本地使用此插件，或
+> 2. 保证本地文件与服务器文件同步
+> 
+> 否则，即使执行UPDATE命令也无法正确编译文件。
+
+### 🛠️ 服务器端准备
+
 1. 在 `logind.c` 中添加客户端验证：
 
-   ```c
-   // logind.c - 客户端验证部分
-   
-   /*
-    * 在验证函数中添加以下代码
-    * 用于验证客户端的合法性
-    */
-   if (arg != sha1("buyi-SerenezZmuy") && 你的原有判断条件) {
-       // 验证失败，断开连接
-       write("客户端非法\n");
-       destruct(ob);
-       return;
-   }
-   ```
+```c
+// logind.c - 客户端验证部分
+
+/*
+ * 在验证函数中添加以下代码
+ * 用于验证客户端的合法性
+ */
+if (arg != sha1("buyi-SerenezZmuy") && 你的原有判断条件) {
+    // 验证失败，断开连接
+    write("客户端非法\n");
+    destruct(ob);
+    return;
+}
+```
 
 2. 在 `cmds/wiz` 目录下创建 `eval.c`：
 
-   ```c
-   // eval.c - 自定义eval命令实现
-   
-   inherit _CLEAN_UP;
-   
-   /*
-    * eval命令主函数
-    * 用于执行LPC代码片段并返回结果
-    */
-   int main(object me, string arg)
-   {
-       object eval_ob;
-       string filename, file;
-       
-       // 参数检查
-       if (!arg) {
-           return help(me);
-       }
-       
-       // 设置临时文件名
-       filename = "/debug_eval_file.c";
-       
-       // 权限检查
-       if (!wizardp(me)) {
-           return 0;
-       }
-       
-       // 清理旧文件
-       if (file_size(filename) != -1) {
-           rm(filename);
-       }
-       if (eval_ob = find_object(filename)) {
-           destruct(eval_ob);
-       }
-       
-       // 构建并写入临时文件
-       file = "mixed eval(object me) { " + arg + "; }\n";
-       write_file(filename, file, 1);
-       
-       // 执行并返回结果
-       write(sprintf(ESC+"MUY%O║\n", filename->eval(me)));
-       
-       return 1;
-   }
-   
-   /*
-    * 帮助信息函数
-    * 显示命令使用说明
-    */
-   int help(object me)
-   {
-       if (!wizardp(me)) {
-           return 0;
-       }
-       
-       write(@HELP
-   指令格式: eval <lpc code>
-   指令说明:
-       测试专用，直接执行LPC代码片断，如：eval return me
-   HELP);
-       
-       return 1;
-   }
-   ```
+```c
+// eval.c - 自定义eval命令实现
 
-### 客户端配置
-1. 创建配置文件：`.vscode/muy-lpc-update.json`
-   ```json
-   {
-     "host": "你的服务器地址",
-     "port": 你的服务器端口,
-     "username": "你的巫师账号",
-     "password": "你的巫师密码",
-     "serverKey": "buyi-SerenezZmuy",
-     "encoding": "UTF8",
-     "loginKey": "你的登录KEY 一般为ZJKEY",
-     "compile": {
-       "autoCompileOnSave": false,
-       "defaultDir": "",
-       "timeout": 30000,
-       "showDetails": true
-     },
-     "loginWithEmail": false
-   }
-   ```
+inherit _CLEAN_UP;
 
-### 安全注意事项
-1. 请勿在公共场合分享您的配置文件
-2. 建议将 `muy-lpc-update.json` 添加到 `.gitignore`
-3. 定期更改密码和验证密钥
-4. 确保服务器端口的安全性
+/*
+ * eval命令主函数
+ * 用于执行LPC代码片段并返回结果
+ */
+int main(object me, string arg)
+{
+    object eval_ob;
+    string filename, file;
 
-### 编码设置
-1. 默认使用 UTF8 编码
-2. 如遇中文乱码，请切换到 GBK 编码
+    // 参数检查
+    if (!arg) {
+        return help(me);
+    }
+
+    // 设置临时文件名
+    filename = "/debug_eval_file.c";
+
+    // 权限检查
+    if (!wizardp(me)) {
+        return 0;
+    }
+
+    // 清理旧文件
+    if (file_size(filename) != -1) {
+        rm(filename);
+    }
+    if (eval_ob = find_object(filename)) {
+        destruct(eval_ob);
+    }
+
+    // 构建并写入临时文件
+    file = "mixed eval(object me) { " + arg + "; }\n";
+    write_file(filename, file, 1);
+
+    // 执行并返回结果
+    write(sprintf(ESC+"MUY%O║\n", filename->eval(me)));
+
+    return 1;
+}
+
+/*
+ * 帮助信息函数
+ * 显示命令使用说明
+ */
+int help(object me)
+{
+    if (!wizardp(me)) {
+        return 0;
+    }
+
+    write(@HELP
+指令格式: eval <lpc code>
+指令说明:
+    测试专用，直接执行LPC代码片断，如：eval return me
+HELP);
+
+    return 1;
+}
+```
+
+### ⚙️ 客户端配置
+
+在项目根目录创建配置文件：`.vscode/muy-lpc-update.json`
+
+```json
+{
+  "host": "你的服务器地址",
+  "port": 你的服务器端口,
+  "username": "你的巫师账号",
+  "password": "你的巫师密码",
+  "serverKey": "buyi-SerenezZmuy",
+  "encoding": "UTF8",
+  "loginKey": "你的登录KEY 一般为ZJKEY",
+  "compile": {
+    "autoCompileOnSave": false,
+    "defaultDir": "",
+    "timeout": 30000,
+    "showDetails": true
+  },
+  "loginWithEmail": false
+}
+```
+
+### 🔒 安全注意事项
+
+- 🚫 禁止在公共场合分享配置文件
+- 📝 建议将 `muy-lpc-update.json` 添加到 `.gitignore`
+- 🔑 定期更改密码和验证密钥
+- 🛡️ 确保服务器端口的安全性
+
+### 📝 编码设置
+
+1. 默认使用 `UTF8` 编码
+2. 如遇中文乱码，请切换到 `GBK` 编码
 3. 编码修改后需要重新连接服务器
 4. 确保所有LPC文件使用相同的编码格式
+
+### 📞 联系与支持
+
+- 🆘 遇到问题？联系QQ：279631638
+- 🐛 发现Bug？提交 [ISSUES](https://github.com/serenez/lpc-server-update/issues)
+- 💡 建议反馈？欢迎在GitHub上交流
 
 ## ✨ 特性
 
 ### 🔌 服务器连接管理
+
 - 一键连接/断开服务器
 - 支持UTF8和GBK编码自动切换
 - 智能重连机制，自动处理网络波动
@@ -157,6 +204,7 @@
 - 支持Eval自定义命令执行
 
 ### 🛠 文件编译
+
 - 快速编译当前文件
 - 支持整个目录批量编译
 - 保存时自动编译（可配置）
@@ -165,6 +213,7 @@
 - 详细的编译信息显示
 
 ### ⚙️ 服务器操作
+
 - 自定义命令管理
   * 快速添加/删除自定义命令
   * 命令模板保存
@@ -177,6 +226,7 @@
 - 实时消息监控和日志记录
 
 ### 📊 消息系统
+
 - 分类显示（成功/错误/警告/系统）
 - 时间戳显示（可配置格式）
 - 自动滚动/锁定功能
@@ -186,6 +236,7 @@
 - 最大消息数量限制
 
 ### 🎯 开发体验
+
 - 直观的图形界面
 - 快捷键支持
 - 实时状态反馈
@@ -203,6 +254,7 @@
 ## 📥 安装
 
 ### 手动安装
+
 1. 下载最新的 `.vsix` 文件
 2. 在 VS Code 中按下 `Ctrl+Shift+P`
 3. 输入 `Install from VSIX`
@@ -224,14 +276,18 @@
 ### 服务器配置
 
 #### 1. 基础配置
+
 在 VS Code 设置中配置以下信息：
+
 - 服务器地址和端口
 - 巫师账号和密码
 - MUD 项目根目录
 - 登录KEY设置
 
 #### 2. 服务器验证
+
 在 `logind.c` 文件中添加验证代码：
+
 ```c
 // 在验证代码中添加以下判断
 if(arg!=sha1("buyi-SerenezZmuy") &&你的原有判断条件条件){
@@ -242,8 +298,10 @@ if(arg!=sha1("buyi-SerenezZmuy") &&你的原有判断条件条件){
 ```
 
 #### 3. Eval自定义命令
+
 在cmds/wiz目录下，创建eval.c文件，并添加以下内容：
-```c  
+
+```c
 int main(object me, string arg)
 {
     object eval_ob;
@@ -288,17 +346,20 @@ HELP);
 ### 开发工作流
 
 #### 1. 连接服务器
+
 - 使用活动栏图标打开插件面板
 - 点击"连接游戏服务器"
 - 等待连接成功提示
 
 #### 2. 文件编译
+
 - 单文件编译：打开文件后点击"编译当前文件"
 - 目录编译：点击"编译目录"并输入目录路径
 - 自动编译：在设置中启用"保存时自动编译"
 - 编译结果会实时显示在消息面板
 
 #### 3. 服务器操作
+
 - 自定义命令：
   * 点击"自定义命令"下拉菜单
   * 选择已保存的命令或添加新命令
@@ -326,6 +387,7 @@ HELP);
 ### 高级配置
 
 #### 消息设置
+
 ```json
 {
   "gameServerCompiler.messages.maxCount": 1000,
@@ -343,6 +405,7 @@ HELP);
 ```
 
 #### 编译设置
+
 ```json
 {
   "gameServerCompiler.compile.defaultDir": "",
@@ -353,6 +416,7 @@ HELP);
 ```
 
 #### 连接设置
+
 ```json
 {
   "gameServerCompiler.connection.maxRetries": 3,
@@ -363,6 +427,7 @@ HELP);
 ```
 
 #### UI设置
+
 ```json
 {
   "gameServerCompiler.ui.messagesPanelSize": 1,
@@ -374,8 +439,10 @@ HELP);
 ## ❓ 常见问题
 
 ### 1. 连接问题
-Q: 无法连接到服务器？  
+
+Q: 无法连接到服务器？
 A: 请检查：
+
 - 服务器地址和端口是否正确
 - 网络连接是否正常
 - 防火墙设置是否允许连接
@@ -383,8 +450,10 @@ A: 请检查：
 - 编码设置是否与服务器匹配
 
 ### 2. 编译问题
-Q: 文件编译失败？  
+
+Q: 文件编译失败？
 A: 可能的原因：
+
 - 文件路径不正确
 - 代码语法错误
 - 依赖文件缺失
@@ -392,8 +461,10 @@ A: 可能的原因：
 - 编码设置不正确
 
 ### 3. 性能问题
-Q: 编译大型目录很慢？  
+
+Q: 编译大型目录很慢？
 A: 建议：
+
 - 使用增量编译
 - 避免不必要的全目录编译
 - 优化代码结构减少依赖
@@ -401,8 +472,10 @@ A: 建议：
 - 适当调整编译超时时间
 
 ### 4. 中文显示问题
-Q: 中文显示乱码？  
+
+Q: 中文显示乱码？
 A: 解决方案：
+
 - 检查编码设置是否正确
 - 在配置中将encoding设置为"GBK"
 - 重新连接服务器使配置生效
@@ -411,12 +484,14 @@ A: 解决方案：
 ## 🤝 贡献指南
 
 我们欢迎所有形式的贡献，包括但不限于：
+
 - 提交问题和建议
 - 改进文档
 - 提交代码修复
 - 添加新功能
 
 贡献步骤：
+
 1. Fork 项目
 2. 创建特性分支
 3. 提交更改

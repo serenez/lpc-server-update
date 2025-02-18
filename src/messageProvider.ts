@@ -179,7 +179,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, currentEncoding, loginWithEmail, configLoadStatus);
 
         // 处理来自webview的消息
-        webviewView.webview.onDidReceiveMessage(message => {
+        webviewView.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
                 case 'clearMessages':
                     this._messages = [];
@@ -193,6 +193,32 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'openSettings':
                     this.handleOpenSettings();
+                    break;
+                case 'openFile':
+                    try {
+                        // 转换为本地文件路径
+                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                        if (!workspaceRoot) {
+                            throw new Error('未找到工作区');
+                        }
+                        
+                        // 移除开头的斜杠并组合完整路径
+                        const localPath = vscode.Uri.file(
+                            path.join(workspaceRoot, message.file.replace(/^\//, ''))
+                        );
+                        
+                        // 打开文件并跳转到指定行
+                        const document = await vscode.workspace.openTextDocument(localPath);
+                        const editor = await vscode.window.showTextDocument(document);
+                        
+                        // 跳转到错误行并选中
+                        const line = message.line - 1; // VSCode 行号从0开始
+                        const range = new vscode.Range(line, 0, line, 1000);
+                        editor.selection = new vscode.Selection(range.start, range.end);
+                        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                    } catch (error) {
+                        this.addMessage(`❌ 打开文件失败: ${error}`);
+                    }
                     break;
             }
         });
@@ -482,6 +508,41 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     .icon-button.settings:hover {
                         background: rgba(100, 181, 246, 0.2);
                     }
+                    .error-link {
+                        cursor: pointer;
+                        background: none;
+                        border: none;
+                        padding: 4px 8px;
+                        margin: 0;
+                        font: inherit;
+                        color: inherit;
+                        text-align: left;
+                        display: block;
+                        width: 100%;
+                        border-radius: 3px;
+                        transition: all 0.2s ease;
+                    }
+                    
+                    .error-link:hover {
+                        background: rgba(255, 0, 0, 0.1);
+                    }
+                    
+                    .error-file, .error-line, .error-message {
+                        display: block;
+                        padding: 2px 0;
+                    }
+                    
+                    .error-file {
+                        color: #40a9ff;
+                    }
+                    
+                    .error-line {
+                        color: #ff7875;
+                    }
+                    
+                    .error-message {
+                        color: #ff4d4f;
+                    }
                 </style>
             </head>
             <body>
@@ -619,6 +680,24 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                             }
                         });
 
+                        // 修改错误消息点击事件
+                        messageContainer.addEventListener('click', (e) => {
+                            const errorLink = e.target.closest('.error-link');
+                            if (errorLink) {
+                                e.preventDefault();
+                                const filePath = errorLink.dataset.file;
+                                const line = parseInt(errorLink.dataset.line);
+                                
+                                console.log('Clicked error link:', { filePath, line });
+                                
+                                vscode.postMessage({
+                                    command: 'openFile',
+                                    file: filePath,
+                                    line: line
+                                });
+                            }
+                        });
+
                         // 初始化按钮状态
                         updateButtons();
                     })();
@@ -743,14 +822,39 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const messageHtml = `<div class="message ${type}${extraClass}">
-            <span class="timestamp">[${timestamp}]</span>
-            ${showIcons && !hasEmoji ? `<span class="icon-container">💬</span>` : ''}
-            <span class="message-content">${formattedMessage}</span>
-        </div>`;
+        // 检查是否是编译错误消息
+        const errorMatch = message.match(/❌ 编译错误:\s*文件:\s*([^\n]+)\s*行号:\s*(\d+)\s*错误:\s*(.*)/);
+        if (errorMatch) {
+            const [, filePath, line, errorMessage] = errorMatch;
+            // 添加可点击的链接样式，使用 button 而不是 span
+            const messageHtml = `<div class="message error${extraClass}">
+                <span class="timestamp">[${timestamp}]</span>
+                ${showIcons ? `<span class="icon-container">❌</span>` : ''}
+                <button class="error-link" data-file="${filePath}" data-line="${line}">
+                    编译错误: 
+                    <span class="error-file">文件: ${filePath}</span>
+                    <span class="error-line">行号: ${line}</span>
+                    <span class="error-message">错误: ${errorMessage}</span>
+                </button>
+            </div>`;
+            
+            this._messages.push(messageHtml);
+            this._view?.webview.postMessage({ 
+                type: 'addMessage', 
+                value: messageHtml,
+                isError: true,
+                errorData: { filePath, line: parseInt(line), message: errorMessage }
+            });
+        } else {
+            const messageHtml = `<div class="message ${type}${extraClass}">
+                <span class="timestamp">[${timestamp}]</span>
+                ${showIcons && !hasEmoji ? `<span class="icon-container">💬</span>` : ''}
+                <span class="message-content">${formattedMessage}</span>
+            </div>`;
 
-        this._messages.push(messageHtml);
-        this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
+            this._messages.push(messageHtml);
+            this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
+        }
     }
 
     public dispose() {

@@ -150,14 +150,14 @@
         },
         "gameServerCompiler.ui.messagesPanelSize": {
           "type": "number",
-          "default": 1,
+          "default": 4,
           "description": "消息面板初始大小",
           "minimum": 1,
           "maximum": 5
         },
         "gameServerCompiler.ui.buttonsPanelSize": {
           "type": "number",
-          "default": 2,
+          "default": 4,
           "description": "按钮面板初始大小",
           "minimum": 1,
           "maximum": 5
@@ -183,8 +183,8 @@
       "activitybar": [
         {
           "id": "game-server-explorer",
-          "title": "LPC服务器",
-          "icon": "resources/server.svg"
+          "title": "🎮 LPC服务器",
+          "icon": "resources/game.svg"
         }
       ]
     },
@@ -193,15 +193,15 @@
         {
           "type": "webview",
           "id": "game-server-messages",
-          "name": "服务器消息",
-          "initialSize": 1,
+          "name": "📡  服务器监控台",
+          "initialSize": 4,
           "order": 1
         },
         {
           "type": "webview",
           "id": "game-server-buttons",
-          "name": "操作按钮",
-          "initialSize": 2,
+          "name": "⚡  指令控制台",
+          "initialSize": 4,
           "order": 2
         }
       ]

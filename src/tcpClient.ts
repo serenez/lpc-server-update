@@ -820,8 +820,8 @@ export class TcpClient implements IDisposable {
         if (!this.checkState()) {
             return;
         }
-        this.log(`准备发送更新命令，文件路径: ${filePath}`, LogLevel.INFO);
-        this.sendCommand(`update ${filePath}`, '更新命令');
+        this.log(`🔄 准备编译文件: ${filePath}`, LogLevel.INFO);
+        this.sendCommand(`update ${filePath}`, '编译命令');
     }
 
     async sendCompileCommand(command: string, showDetails: boolean = true) {
@@ -1417,7 +1417,11 @@ export class TcpClient implements IDisposable {
     }
 
     public async sendRestartCommand(): Promise<void> {
-        await this.sendCustomCommand('shutdown');
+        if (!this.checkState()) {
+            return;
+        }
+        this.log('🔄 发送重启命令', LogLevel.INFO);
+        this.sendCommand('shutdown', '重启命令');
     }
 
     dispose() {
@@ -1521,18 +1525,18 @@ export class TcpClient implements IDisposable {
 
     // 添加命令发送前的状态检查
     private checkState(): boolean {
-        this.log(`发送命令前状态检查:`, LogLevel.DEBUG);
-        this.log(`- 连接状态: ${this.connected}`, LogLevel.DEBUG);
-        this.log(`- 登录状态: ${this.loggedIn}`, LogLevel.DEBUG);
+        this.log(`🔍 检查状态:`, LogLevel.DEBUG);
+        this.log(`- 🔌 连接状态: ${this.connected}`, LogLevel.DEBUG);
+        this.log(`- 👤 登录状态: ${this.loggedIn}`, LogLevel.DEBUG);
         
         if (!this.isConnected()) {
-            this.log('服务器未连接，无法发送命令', LogLevel.ERROR);
-            vscode.window.showErrorMessage('请先连接到服务器');
+            this.log('❌ 服务器未连接，无法发送命令', LogLevel.ERROR);
+            vscode.window.showErrorMessage('⚠️ 请先连接到服务器');
             return false;
         }
         if (!this.isLoggedIn()) {
-            this.log('角色未登录，无法发送命令', LogLevel.ERROR);
-            vscode.window.showErrorMessage('请先登录');
+            this.log('❌ 角色未登录，无法发送命令', LogLevel.ERROR);
+            vscode.window.showErrorMessage('⚠️ 请先登录');
             return false;
         }
         return true;
@@ -1543,7 +1547,7 @@ export class TcpClient implements IDisposable {
         if (!this.checkState()) {
             return;
         }
-        this.log(`发送eval命令: ${code}`, LogLevel.DEBUG);
+        this.log(`⚡ 执行代码: ${code}`, LogLevel.DEBUG);
         this.sendCommand(`eval ${code}`, 'Eval命令');
     }
 

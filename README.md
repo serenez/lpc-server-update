@@ -3,8 +3,6 @@
 <div align="center">
 
 [![Version](https://img.shields.io/badge/version-Z.0.2-blue.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
-[![Downloads](https://img.shields.io/badge/downloads-1k%2B-brightgreen.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
-[![Rating](https://img.shields.io/badge/rating-★★★★★-gold.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 一个专业的 VS Code 扩展，为 LPC 游戏开发者提供完整的服务器连接和管理解决方案。

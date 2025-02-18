@@ -12,6 +12,8 @@ interface Config {
         timeout: number;
         showDetails: boolean;
     };
+    loginWithEmail: boolean;
+    loginKey?: string;
 }
 
 export class MessageProvider implements vscode.WebviewViewProvider {
@@ -25,7 +27,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     private async handleEncodingChange(currentEncoding: string) {
         try {
-            // 读取当前编码设置
+            // 读取当前配置
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
             if (!workspaceRoot) {
                 throw new Error('未找到工作区目录');
@@ -35,42 +37,81 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             const configData = fs.readFileSync(configPath, 'utf8');
             const config = JSON.parse(configData) as Config;
             
-            // 获取实际的当前编码
-            const actualEncoding = config.encoding || 'UTF8';
+            // 直接切换编码
+            const newEncoding = currentEncoding === 'UTF8' ? 'GBK' : 'UTF8';
+            config.encoding = newEncoding;
             
-            // 构建编码选项
-            const encodings = ['UTF8', 'GBK'];
-            const items = encodings.map(enc => ({
-                label: enc,
-                description: enc === actualEncoding ? '当前编码' : '',
-                picked: enc === actualEncoding
-            }));
-
-            // 显示选择框
-            const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: '选择编码',
-                title: '更改编码设置'
+            // 保存配置
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            
+            // 更新按钮文本
+            this._view?.webview.postMessage({ 
+                type: 'updateEncoding',
+                encoding: newEncoding
             });
 
-            if (selected) {
-                // 更新配置文件
-                config.encoding = selected.label;
-                fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-                
-                // 更新按钮文本
-                this._view?.webview.postMessage({ 
-                    type: 'updateEncoding',
-                    encoding: selected.label
-                });
-
-                // 显示成功消息
-                this.addMessage(`编码设置已更改为: ${selected.label}`);
-                
-                // 通知需要重新连接
-                vscode.window.showInformationMessage('编码设置已更改,需要重新连接服务器以应用更改。');
-            }
+            // 显示成功消息
+            this.addMessage(`编码设置已更改为: ${newEncoding}`);
+            
+            // 通知需要重新连接
+            vscode.window.showInformationMessage('编码设置已更改,需要重新连接服务器以应用更改。');
         } catch (error) {
             vscode.window.showErrorMessage('更新编码设置失败: ' + error);
+        }
+    }
+
+    private async handleLoginEmailChange(currentLoginWithEmail: boolean) {
+        try {
+            // 读取当前配置
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (!workspaceRoot) {
+                throw new Error('未找到工作区目录');
+            }
+
+            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
+            const configData = fs.readFileSync(configPath, 'utf8');
+            const config = JSON.parse(configData) as Config;
+            
+            // 切换状态
+            config.loginWithEmail = !currentLoginWithEmail;
+            
+            // 保存配置
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            
+            // 更新按钮文本
+            this._view?.webview.postMessage({ 
+                type: 'updateLoginEmail',
+                loginWithEmail: config.loginWithEmail
+            });
+
+            // 显示成功消息
+            this.addMessage(`登录信息已更改为${config.loginWithEmail ? '包含' : '不包含'}邮箱`);
+            
+            // 通知需要重新连接
+            vscode.window.showInformationMessage('登录设置已更改,需要重新连接服务器以应用更改。');
+        } catch (error) {
+            vscode.window.showErrorMessage('更新登录设置失败: ' + error);
+        }
+    }
+
+    private async handleOpenSettings() {
+        try {
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (!workspaceRoot) {
+                throw new Error('未找到工作区目录');
+            }
+
+            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
+            if (!fs.existsSync(configPath)) {
+                throw new Error('配置文件不存在');
+            }
+
+            const configUri = vscode.Uri.file(configPath);
+            await vscode.window.showTextDocument(configUri);
+            
+            this.addMessage('已打开配置文件，您可以编辑 loginKey 字段');
+        } catch (error) {
+            vscode.window.showErrorMessage('打开配置文件失败: ' + error);
         }
     }
 
@@ -85,8 +126,11 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
-        // 读取当前编码设置
+        // 读取当前配置
         let currentEncoding = 'UTF8';
+        let loginWithEmail = false;
+        let configLoadStatus = '未加载';
+        
         try {
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
             if (workspaceRoot) {
@@ -95,13 +139,28 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     const configData = fs.readFileSync(configPath, 'utf8');
                     const config = JSON.parse(configData) as Config;
                     currentEncoding = config.encoding || 'UTF8';
+                    loginWithEmail = config.loginWithEmail || false;
+                    configLoadStatus = '已加载';
+                    
+                    // 移除重复的配置加载信息
+                    if (configLoadStatus === '文件不存在') {
+                        this.addMessage('配置文件不存在，将使用默认配置');
+                    }
+                } else {
+                    configLoadStatus = '文件不存在';
+                    this.addMessage('配置文件不存在，将使用默认配置');
                 }
+            } else {
+                configLoadStatus = '工作区未找到';
+                this.addMessage('未找到工作区，请打开有效的工作区');
             }
         } catch (error) {
-            console.error('读取编码设置失败:', error);
+            configLoadStatus = '加载失败';
+            console.error('读取配置设置失败:', error);
+            this.addMessage(`配置文件读取失败: ${error}`);
         }
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, currentEncoding);
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, currentEncoding, loginWithEmail, configLoadStatus);
 
         // 处理来自webview的消息
         webviewView.webview.onDidReceiveMessage(message => {
@@ -113,11 +172,17 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 case 'changeEncoding':
                     this.handleEncodingChange(message.currentEncoding);
                     break;
+                case 'changeLoginEmail':
+                    this.handleLoginEmailChange(message.currentLoginWithEmail);
+                    break;
+                case 'openSettings':
+                    this.handleOpenSettings();
+                    break;
             }
         });
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview, currentEncoding: string) {
+    private _getHtmlForWebview(webview: vscode.Webview, currentEncoding: string, loginWithEmail: boolean, configLoadStatus: string) {
         const config = vscode.workspace.getConfiguration('gameServerCompiler');
         const colors = config.get<any>('messages.colors', {
             success: '#4CAF50',
@@ -144,14 +209,17 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         margin: 0;
                         box-sizing: border-box;
                         background: var(--vscode-editor-background);
+                        overflow: hidden;
                     }
                     #message-container {
                         display: flex;
                         flex-direction: column;
-                        height: calc(100vh - 50px);
+                        height: 100%;
                         overflow-y: auto;
-                        padding-bottom: 40px;
+                        padding-top: 50px;
+                        padding-bottom: 10px;
                         gap: 6px;
+                        box-sizing: border-box;
                     }
                     #message-container::-webkit-scrollbar {
                         width: 6px;
@@ -302,161 +370,242 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     }
                     .button-container {
                         position: fixed;
-                        bottom: 10px;
-                        right: 10px;
-                        display: flex;
-                        gap: 10px;
-                        z-index: 1000;
-                    }
-                    .action-button {
-                        padding: 6px 12px;
-                        background: var(--vscode-button-background);
-                        color: var(--vscode-button-foreground);
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        display: flex;
-                        align-items: center;
-                        gap: 6px;
-                        font-size: 12px;
-                        transition: all 0.2s ease;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                    }
-                    .action-button:hover {
-                        background: var(--vscode-button-hoverBackground);
-                        transform: translateY(-1px);
-                    }
-                    .action-button:active {
-                        transform: translateY(0);
-                    }
-                    .action-button.active {
-                        background: #2196F3;
-                        box-shadow: 0 2px 4px rgba(33,150,243,0.3);
-                    }
-                    .button-icon {
-                        font-size: 14px;
-                        line-height: 1;
-                    }
-                    .encoding-button {
-                        position: fixed;
                         top: 10px;
                         right: 10px;
-                        padding: 4px 8px;
+                        display: flex;
+                        gap: 6px;
+                        z-index: 1000;
+                        background: var(--vscode-editor-background);
+                        padding: 4px;
+                        border-radius: 4px;
+                    }
+                    .config-button {
+                        padding: 2px 6px;
                         background: var(--vscode-button-secondaryBackground);
                         color: var(--vscode-button-secondaryForeground);
                         border: none;
-                        border-radius: 4px;
+                        border-radius: 3px;
                         cursor: pointer;
-                        font-size: 12px;
+                        font-size: 11px;
                         display: flex;
                         align-items: center;
                         gap: 4px;
-                        opacity: 0.8;
+                        opacity: 0.9;
                         transition: all 0.2s ease;
-                        z-index: 1000;
+                        white-space: nowrap;
+                        min-width: fit-content;
+                        font-family: var(--vscode-font-family);
+                        line-height: 16px;
+                        height: 20px;
                     }
-                    .encoding-button:hover {
+                    .config-button:hover {
                         opacity: 1;
-                        background: var(--vscode-button-secondaryHoverBackground);
+                    }
+                    .config-button.utf8 {
+                        background: rgba(33, 150, 243, 0.2);
+                        color: #2196F3;
+                    }
+                    .config-button.utf8:hover {
+                        background: rgba(33, 150, 243, 0.3);
+                    }
+                    .config-button.gbk {
+                        background: rgba(156, 39, 176, 0.2);
+                        color: #9C27B0;
+                    }
+                    .config-button.gbk:hover {
+                        background: rgba(156, 39, 176, 0.3);
+                    }
+                    .config-button.with-email {
+                        background: rgba(76, 175, 80, 0.2);
+                        color: #4CAF50;
+                    }
+                    .config-button.with-email:hover {
+                        background: rgba(76, 175, 80, 0.3);
+                    }
+                    .config-button.without-email {
+                        background: rgba(255, 152, 0, 0.2);
+                        color: #FF9800;
+                    }
+                    .config-button.without-email:hover {
+                        background: rgba(255, 152, 0, 0.3);
+                    }
+                    .icon-button {
+                        padding: 2px;
+                        width: 20px;
+                        height: 20px;
+                        background: transparent;
+                        border: none;
+                        cursor: pointer;
+                        font-size: 14px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        opacity: 0.7;
+                        transition: all 0.2s ease;
+                        color: var(--vscode-foreground);
+                        border-radius: 3px;
+                    }
+                    .icon-button:hover {
+                        opacity: 1;
+                        background: var(--vscode-button-secondaryBackground);
+                    }
+                    .icon-button.delete {
+                        color: var(--vscode-errorForeground);
+                    }
+                    .icon-button.delete:hover {
+                        background: rgba(255,0,0,0.1);
+                    }
+                    .icon-button.active {
+                        opacity: 1;
+                        color: #2196F3;
+                        background: rgba(33,150,243,0.1);
+                    }
+                    .icon-button.settings {
+                        color: #64B5F6;
+                    }
+                    .icon-button.settings:hover {
+                        background: rgba(100, 181, 246, 0.2);
                     }
                 </style>
             </head>
             <body>
-                <button class="encoding-button" onclick="changeEncoding()">
-                    <span class="icon">🔤</span>
-                    <span>编码: ${currentEncoding}</span>
-                </button>
                 <div id="message-container">
                     ${this._messages.join('\n')}
                 </div>
                 <div class="button-container">
-                    <button class="action-button" id="scrollLockButton" onclick="toggleScrollLock()">
-                        <span class="button-icon">🔒</span>
-                        <span>自动滚动</span>
+                    <button class="config-button settings" id="settingsButton" title="设置登录KEY">
+                        登录KEY
                     </button>
-                    <button class="action-button" onclick="clearMessages()">
-                        <span class="button-icon">🗑️</span>
-                        <span>清除</span>
+                    <button class="config-button" id="encodingButton" title="当前编码">
+                        ${currentEncoding}
+                    </button>
+                    <button class="config-button" id="loginEmailButton" title="登录邮箱状态">
+                        登录:${loginWithEmail ? '含邮箱' : '不含'}
+                    </button>
+                    <button class="icon-button" id="scrollLockButton" title="自动滚动">
+                        🔒
+                    </button>
+                    <button class="icon-button delete" id="clearButton" title="清除消息">
+                        ❌
                     </button>
                 </div>
                 <script>
-                    const vscode = acquireVsCodeApi();
-                    const messageContainer = document.getElementById('message-container');
-                    const config = ${JSON.stringify({
-                        autoScroll: config.get<boolean>('messages.autoScroll', true),
-                        maxCount: config.get<number>('messages.maxCount', 1000),
-                        encoding: currentEncoding
-                    })};
-                    let autoScroll = config.autoScroll;
-                    
-                    // 初始化按钮状态
-                    if (autoScroll) {
-                        scrollLockButton.classList.add('active');
-                    }
-                    
-                    function toggleScrollLock() {
-                        autoScroll = !autoScroll;
-                        scrollLockButton.classList.toggle('active');
-                        scrollLockButton.querySelector('.button-icon').textContent = 
-                            autoScroll ? '🔒' : '🔓';
-                        if (autoScroll) {
-                            scrollToBottom();
-                        }
-                    }
-                    
-                    function scrollToBottom() {
-                        messageContainer.scrollTop = messageContainer.scrollHeight;
-                    }
-                    
-                    function clearMessages() {
-                        vscode.postMessage({
-                            command: 'clearMessages'
-                        });
-                    }
-
-                    function limitMessages() {
-                        const messages = messageContainer.children;
-                        if (messages.length > config.maxCount) {
-                            const removeCount = messages.length - config.maxCount;
-                            for (let i = 0; i < removeCount; i++) {
-                                messages[0].remove();
+                    (function() {
+                        const vscode = acquireVsCodeApi();
+                        const messageContainer = document.getElementById('message-container');
+                        const encodingButton = document.getElementById('encodingButton');
+                        const loginEmailButton = document.getElementById('loginEmailButton');
+                        const scrollLockButton = document.getElementById('scrollLockButton');
+                        const clearButton = document.getElementById('clearButton');
+                        const settingsButton = document.getElementById('settingsButton');
+                        
+                        const config = {
+                            autoScroll: ${config.get<boolean>('messages.autoScroll', true)},
+                            maxCount: ${config.get<number>('messages.maxCount', 1000)},
+                            encoding: "${currentEncoding}",
+                            loginWithEmail: ${loginWithEmail}
+                        };
+                        
+                        let autoScroll = config.autoScroll;
+                        
+                        function updateButtons() {
+                            if (encodingButton) {
+                                encodingButton.textContent = config.encoding;
+                                encodingButton.className = 'config-button ' + 
+                                    (config.encoding === 'UTF8' ? 'utf8' : 'gbk');
+                            }
+                            if (loginEmailButton) {
+                                loginEmailButton.textContent = "登录:" + (config.loginWithEmail ? '含邮箱' : '不含邮箱');
+                                loginEmailButton.className = 'config-button ' + 
+                                    (config.loginWithEmail ? 'with-email' : 'without-email');
+                            }
+                            if (scrollLockButton) {
+                                scrollLockButton.textContent = autoScroll ? '🔒' : '🔓';
+                                scrollLockButton.classList.toggle('active', autoScroll);
                             }
                         }
-                    }
-                    
-                    function changeEncoding() {
-                        vscode.postMessage({
-                            command: 'changeEncoding',
-                            currentEncoding: config.encoding
+                        
+                        // 绑定按钮事件
+                        encodingButton.addEventListener('click', () => {
+                            vscode.postMessage({
+                                command: 'changeEncoding',
+                                currentEncoding: config.encoding
+                            });
                         });
-                    }
-
-                    window.addEventListener('message', event => {
-                        const message = event.data;
-                        switch (message.type) {
-                            case 'addMessage':
-                                const div = document.createElement('div');
-                                div.innerHTML = message.value;
-                                messageContainer.appendChild(div);
-                                limitMessages();
-                                if (autoScroll) {
-                                    scrollToBottom();
-                                }
-                                break;
-                            case 'clearMessages':
-                                messageContainer.innerHTML = '';
-                                break;
-                            case 'updateEncoding':
-                                const encodingButton = document.querySelector('.encoding-button span:last-child');
-                                if (encodingButton) {
-                                    encodingButton.textContent = '编码: ' + message.encoding;
-                                }
-                                break;
+                        
+                        loginEmailButton.addEventListener('click', () => {
+                            vscode.postMessage({
+                                command: 'changeLoginEmail',
+                                currentLoginWithEmail: config.loginWithEmail
+                            });
+                        });
+                        
+                        scrollLockButton.addEventListener('click', () => {
+                            autoScroll = !autoScroll;
+                            updateButtons();
+                            if (autoScroll) {
+                                scrollToBottom();
+                            }
+                        });
+                        
+                        clearButton.addEventListener('click', clearMessages);
+                        
+                        settingsButton?.addEventListener('click', () => {
+                            vscode.postMessage({
+                                command: 'openSettings'
+                            });
+                        });
+                        
+                        function scrollToBottom() {
+                            messageContainer.scrollTop = messageContainer.scrollHeight;
                         }
-                    });
+                        
+                        function clearMessages() {
+                            vscode.postMessage({
+                                command: 'clearMessages'
+                            });
+                        }
 
-                    // 初始化
-                    updateButtons();
+                        function limitMessages() {
+                            const messages = messageContainer.children;
+                            if (messages.length > config.maxCount) {
+                                const removeCount = messages.length - config.maxCount;
+                                for (let i = 0; i < removeCount; i++) {
+                                    messages[0].remove();
+                                }
+                            }
+                        }
+
+                        // 监听状态更新
+                        window.addEventListener('message', event => {
+                            const message = event.data;
+                            switch (message.type) {
+                                case 'updateEncoding':
+                                    config.encoding = message.encoding;
+                                    updateButtons();
+                                    break;
+                                case 'updateLoginEmail':
+                                    config.loginWithEmail = message.loginWithEmail;
+                                    updateButtons();
+                                    break;
+                                case 'addMessage':
+                                    const div = document.createElement('div');
+                                    div.innerHTML = message.value;
+                                    messageContainer.appendChild(div);
+                                    limitMessages();
+                                    if (autoScroll) {
+                                        scrollToBottom();
+                                    }
+                                    break;
+                                case 'clearMessages':
+                                    messageContainer.innerHTML = '';
+                                    break;
+                            }
+                        });
+
+                        // 初始化按钮状态
+                        updateButtons();
+                    })();
                 </script>
             </body>
             </html>`;

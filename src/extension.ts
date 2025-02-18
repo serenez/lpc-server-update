@@ -18,12 +18,14 @@ interface Config {
     rootPath: string;
     serverKey: string;
     encoding: string;
+    loginKey: string;
     compile: {
         defaultDir: string;
         autoCompileOnSave: boolean;
         timeout: number;
         showDetails: boolean;
     };
+    loginWithEmail?: boolean;
 }
 
 // 确保目录存在
@@ -45,7 +47,7 @@ function readConfig(): Config {
             const config = JSON.parse(configData);
             
             // 确保所有必需字段都存在，优先使用 VS Code 设置
-            return {
+            const result = {
                 host: config.host || '',
                 port: config.port || 0,
                 username: config.username || '',
@@ -53,14 +55,42 @@ function readConfig(): Config {
                 rootPath: config.rootPath || path.dirname(configPath),
                 serverKey: config.serverKey || '',
                 encoding: config.encoding || 'UTF8',
+                loginKey: config.loginKey || 'buyi-ZMuy',
                 compile: {
                     defaultDir: config.compile?.defaultDir || '',
-                    // 优先使用 VS Code 设置的值，如果没有则使用配置文件的值
                     autoCompileOnSave: autoCompileOnSave !== undefined ? autoCompileOnSave : (config.compile?.autoCompileOnSave || false),
                     timeout: config.compile?.timeout || 30000,
                     showDetails: config.compile?.showDetails || true
-                }
+                },
+                loginWithEmail: config.loginWithEmail || false
             };
+
+            // 如果配置中没有 loginKey，写入空字符串并打开配置文件
+            if (config.loginKey === undefined) {
+                const updatedConfig = { ...config, loginKey: '' };
+                fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2));
+                messageProvider?.addMessage('已添加 loginKey 配置项');
+                
+                const configUri = vscode.Uri.file(configPath);
+                vscode.window.showTextDocument(configUri).then(editor => {
+                    const text = editor.document.getText();
+                    const loginKeyPos = text.indexOf('"loginKey"');
+                    if (loginKeyPos !== -1) {
+                        const startPos = editor.document.positionAt(loginKeyPos);
+                        const endPos = editor.document.positionAt(loginKeyPos + 'loginKey": ""'.length);
+                        editor.selection = new vscode.Selection(startPos, endPos);
+                        editor.revealRange(new vscode.Range(startPos, endPos));
+                    }
+                });
+            }
+
+            // 添加配置加载信息
+            messageProvider?.addMessage('配置文件加载成功');
+            messageProvider?.addMessage(`当前编码: ${result.encoding}`);
+            messageProvider?.addMessage(`当前登录KEY: ${result.loginKey || 'buyi-ZMuy'}`);
+            messageProvider?.addMessage(`登录信息${result.loginWithEmail ? '包含' : '不包含'}邮箱`);
+
+            return result;
         }
 
         // 如果配置文件不存在，仍然尝试使用 VS Code 设置
@@ -72,12 +102,14 @@ function readConfig(): Config {
             rootPath: path.dirname(configPath),
             serverKey: '',
             encoding: 'UTF8',
+            loginKey: 'buyi-ZMuy',
             compile: {
                 defaultDir: '',
                 autoCompileOnSave: autoCompileOnSave || false,
                 timeout: 30000,
                 showDetails: true
-            }
+            },
+            loginWithEmail: false
         };
     } catch (error) {
         console.error('读取配置文件失败:', error);
@@ -89,12 +121,14 @@ function readConfig(): Config {
             rootPath: path.dirname(configPath),
             serverKey: '',
             encoding: 'UTF8',
+            loginKey: 'buyi-ZMuy',
             compile: {
                 defaultDir: '',
                 autoCompileOnSave: false,
                 timeout: 30000,
                 showDetails: true
-            }
+            },
+            loginWithEmail: false
         };
     }
 }
@@ -185,9 +219,10 @@ async function checkAndUpdateConfig(): Promise<boolean> {
     // 检查是否需要配置
     const needsServerConfig = !config.host || !config.port;
     const needsUserConfig = !config.username || !config.password;
+    const needsLoginWithEmail = config.loginWithEmail === undefined;
     
     // 如果配置完整，直接返回
-    if (!needsServerConfig && !needsUserConfig) {
+    if (!needsServerConfig && !needsUserConfig && !needsLoginWithEmail) {
         messageProvider?.addMessage('配置已完整，无需更新');
         return true;
     }
@@ -204,6 +239,20 @@ async function checkAndUpdateConfig(): Promise<boolean> {
         if (!await checkAndUpdateUserConfig()) {
             return false;
         }
+    }
+
+    // 检查loginWithEmail配置
+    if (needsLoginWithEmail) {
+        const choice = await vscode.window.showQuickPick(['是', '否'], {
+            placeHolder: '是否在登录信息中包含邮箱?'
+        });
+        
+        if (choice === undefined) {
+            return false;
+        }
+
+        await saveConfig({ loginWithEmail: choice === '是' });
+        messageProvider?.addMessage(`已设置登录信息${choice === '是' ? '包含' : '不包含'}邮箱`);
     }
 
     return true;
@@ -269,17 +318,32 @@ async function initializeConfig() {
                 rootPath: workspaceRoot,
                 serverKey: 'buyi-SerenezZmuy',
                 encoding: 'UTF8',
+                loginKey: 'buyi-ZMuy',
                 compile: {
                     defaultDir: '',
                     autoCompileOnSave: false,
                     timeout: 30000,
                     showDetails: true
-                }
+                },
+                loginWithEmail: false
             };
 
             // 写入配置文件
             fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
             messageProvider?.addMessage('创建默认配置文件');
+
+            // 打开配置文件并选中 loginKey 字段
+            const configUri = vscode.Uri.file(configPath);
+            vscode.window.showTextDocument(configUri).then(editor => {
+                const text = editor.document.getText();
+                const loginKeyPos = text.indexOf('"loginKey"');
+                if (loginKeyPos !== -1) {
+                    const startPos = editor.document.positionAt(loginKeyPos);
+                    const endPos = editor.document.positionAt(loginKeyPos + 'loginKey": ""'.length);
+                    editor.selection = new vscode.Selection(startPos, endPos);
+                    editor.revealRange(new vscode.Range(startPos, endPos));
+                }
+            });
 
             // 显示欢迎信息
             vscode.window.showInformationMessage('LPC服务器连接器已初始化，请在.vscode/muy-lpc-update.json中配置服务器信息。');
@@ -289,16 +353,42 @@ async function initializeConfig() {
             
             // 检查配置完整性
             const missingFields = [];
-            if (!config.host) missingFields.push('host');
-            if (!config.port) missingFields.push('port');
-            if (!config.username) missingFields.push('username');
-            if (!config.password) missingFields.push('password');
-            if (!config.rootPath) missingFields.push('rootPath');
-            if (!config.serverKey) missingFields.push('serverKey');
-            if (!config.encoding) missingFields.push('encoding');
+            messageProvider?.addMessage('开始检查配置文件...');
+            if (!config.host) {
+                missingFields.push('host');
+                messageProvider?.addMessage('检查服务器地址...');
+            }
+            if (!config.port) {
+                missingFields.push('port');
+                messageProvider?.addMessage('检查服务器端口...');
+            }
+            if (!config.username) {
+                missingFields.push('username');
+                messageProvider?.addMessage('检查用户名...');
+            }
+            if (!config.password) {
+                missingFields.push('password');
+                messageProvider?.addMessage('检查密码...');
+            }
+            if (!config.rootPath) {
+                missingFields.push('rootPath');
+                messageProvider?.addMessage('检查根目录...');
+            }
+            if (!config.serverKey) {
+                missingFields.push('serverKey');
+                messageProvider?.addMessage('检查服务器密钥...');
+            }
+            if (!config.encoding) {
+                missingFields.push('encoding');
+                messageProvider?.addMessage('检查编码设置...');
+            }
+            if (config.loginKey === undefined) {
+                missingFields.push('loginKey');
+                messageProvider?.addMessage('检查登录KEY...');
+            }
 
             // 如果有缺失字段，更新配置
-            if (missingFields.length > 0) {
+            if (missingFields.length > 0 || config.loginKey === undefined) {
                 const updatedConfig = {
                     ...config,
                     host: config.host || '',
@@ -308,17 +398,35 @@ async function initializeConfig() {
                     rootPath: config.rootPath || workspaceRoot,
                     serverKey: config.serverKey || 'buyi-SerenezZmuy',
                     encoding: config.encoding || 'UTF8',
+                    loginKey: config.loginKey || 'buyi-ZMuy',
                     compile: {
                         defaultDir: config.compile?.defaultDir || '',
                         autoCompileOnSave: config.compile?.autoCompileOnSave || false,
                         timeout: config.compile?.timeout || 30000,
                         showDetails: config.compile?.showDetails || true
-                    }
+                    },
+                    loginWithEmail: config.loginWithEmail || false
                 };
 
                 // 写入更新后的配置
                 fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2));
                 messageProvider?.addMessage('更新配置文件结构');
+
+                // 如果添加了loginKey字段，打开配置文件并选中该字段
+                if (config.loginKey === undefined) {
+                    messageProvider?.addMessage('已添加loginKey配置项');
+                    const configUri = vscode.Uri.file(configPath);
+                    vscode.window.showTextDocument(configUri).then(editor => {
+                        const text = editor.document.getText();
+                        const loginKeyPos = text.indexOf('"loginKey"');
+                        if (loginKeyPos !== -1) {
+                            const startPos = editor.document.positionAt(loginKeyPos);
+                            const endPos = editor.document.positionAt(loginKeyPos + 'loginKey": ""'.length);
+                            editor.selection = new vscode.Selection(startPos, endPos);
+                            editor.revealRange(new vscode.Range(startPos, endPos));
+                        }
+                    });
+                }
 
                 // 提示用户
                 vscode.window.showInformationMessage(`配置文件已更新，请补充以下信息: ${missingFields.join(', ')}`);

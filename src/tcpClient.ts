@@ -62,7 +62,7 @@ export class TcpClient {
         this.initSocket();
     }
 
-    private initSocket() {
+  private initSocket() {
         if (this.socket) {
             this.log('清理现有socket连接', LogLevel.DEBUG);
             this.socket.removeAllListeners();
@@ -86,14 +86,13 @@ export class TcpClient {
             
             this.reconnectAttempts = 0;
             this.isFirstData = true;
-            this.log('已连接到游戏服务器', LogLevel.INFO);
+          this.log('已连接到游戏服务器', LogLevel.INFO);
         });
 
         let buffer = Buffer.alloc(0);
         
         this.socket.on('data', (data) => {
-          try {
-              this.log('收到数据'+data, LogLevel.DEBUG);
+            try {
                 // 将收到的数据添加到buffer
                 buffer = Buffer.concat([buffer, data]);
                 
@@ -267,7 +266,7 @@ export class TcpClient {
             // 只有在不收集MUY消息时才处理其他类型的消息
             if (!this.isCollectingMuy) {
                 // 检查是否是协议消息
-                const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
+        const protocolMatch = message.match(/^\x1b(\d{3})(.*)/);
                 if (protocolMatch) {
                     const [, protocolCode, content] = protocolMatch;
                     this.processProtocolMessage(protocolCode, content);
@@ -296,11 +295,11 @@ export class TcpClient {
                 this.login();
             } else if (cleanedMessage.includes('muy_update:')) {
                 const match = cleanedMessage.match(/muy_update:(.*)/);
-                if (match) {
-                    const dependencyFile = match[1].trim();
+                    if (match) {
+                        const dependencyFile = match[1].trim();
                     this.log(`检测到依赖文件更新: ${dependencyFile}`, LogLevel.INFO);
-                    this.sendUpdateCommand(dependencyFile);
-                }
+                        this.sendUpdateCommand(dependencyFile);
+                    }
             } else if (cleanedMessage.startsWith('ver')) {
                 this.log('收到服务器连接成功信号', LogLevel.INFO);
                 this.connected = true;
@@ -367,8 +366,13 @@ export class TcpClient {
             case '000':
                 if (cleanedContent === '0007') {
                     this.log('收到登录成功信号', LogLevel.INFO);
-                    this.setLoginState(true);
+                this.setLoginState(true);
                 }
+                break;
+          case '014':
+            // 将收到的信息发送到远程服务器
+            this.log(`收到014协议消息: ${cleanedContent}`, LogLevel.DEBUG);
+            this.sendCommand(cleanedContent);
                 break;
             case '015':
                 if (cleanedContent.includes('密码错误') || cleanedContent.includes('账号不存在')) {
@@ -395,7 +399,7 @@ export class TcpClient {
                     }
                     this.channels.server.appendLine(`${icon}${cleanedContent}`);
                 }
-            break;
+                break;
         }
     }
 
@@ -571,12 +575,12 @@ export class TcpClient {
         }
 
         return new Promise((resolve, reject) => {
-            try {
-                this.lastHost = host;
-                this.lastPort = port;
-                this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
-                
-                this.initSocket();
+        try {
+            this.lastHost = host;
+            this.lastPort = port;
+            this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
+            
+            this.initSocket();
 
                 const timeout = this.config.get<number>('connection.timeout', 10000);
                 const timeoutPromise = new Promise<void>((_, reject) => {
@@ -584,10 +588,10 @@ export class TcpClient {
                 });
 
                 const connectPromise = new Promise<void>((resolve, reject) => {
-                    this.socket?.once('error', (err) => {
+                this.socket?.once('error', (err) => {
                         this.log(`连接错误: ${err.message}`, LogLevel.ERROR);
-                        reject(err);
-                    });
+                    reject(err);
+                });
 
                     // 检查是否是本地回环地址
                     const isLocalhost = host === 'localhost' || host === '127.0.0.1';
@@ -622,10 +626,10 @@ export class TcpClient {
                         reject(error);
                     });
 
-            } catch (error) {
-                this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
+        } catch (error) {
+            this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
                 reject(error);
-            }
+        }
         });
     }
 
@@ -660,25 +664,23 @@ export class TcpClient {
 
     private async login() {
         try {
-            const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
-            if (!fs.existsSync(configPath)) {
-                throw new Error('配置文件不存在，请先配置muy-lpc-update.json');
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (!workspaceRoot) {
+                throw new Error('未找到工作区目录');
             }
 
+            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
             const configData = fs.readFileSync(configPath, 'utf8');
             const config = JSON.parse(configData);
-
-            if (!config.username || !config.password) {
-                throw new Error('用户名或密码未配置，请在muy-lpc-update.json中配置');
-            }
 
             this.log('开始登录...', LogLevel.INFO);
             this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.INFO);
             
             // 根据loginWithEmail配置决定登录信息格式
+            const loginKey = config.loginKey || 'buyi-ZMuy';
             const loginString = config.loginWithEmail ? 
-                `${config.username}║${config.password}║zzzz║zzzz@qq.com\n` :
-                `${config.username}║${config.password}║zzzz\n`;
+                `${config.username}║${config.password}║${loginKey}║zmuy@qq.com\n` :
+                `${config.username}║${config.password}║${loginKey}\n`;
             
             this.log(`发送登录信息: ${loginString}`, LogLevel.INFO);
             
@@ -718,7 +720,7 @@ export class TcpClient {
             this.socket.write(encodedCommand);
             
             this.log(`${commandName}发送完成`, LogLevel.DEBUG);
-            return true;
+        return true;
         } catch (error) {
             this.log(`发送${commandName}失败: ${error}`, LogLevel.ERROR);
             return false;
@@ -761,14 +763,14 @@ export class TcpClient {
             const command = `update ${filePathWithoutExt}`;
             
             if (showDetails) {
-                this.log(`发送更新命令: ${command}`, LogLevel.INFO);
+            this.log(`发送更新命令: ${command}`, LogLevel.INFO);
             }
 
             const compilePromise = new Promise<void>((resolve, reject) => {
                 try {
                     this.socket?.write(`${command}\n`, () => {
                         if (showDetails) {
-                            this.log('更新命令发送完成', LogLevel.DEBUG);
+                this.log('更新命令发送完成', LogLevel.DEBUG);
                         }
                         resolve();
                     });
@@ -943,7 +945,7 @@ export class TcpClient {
         }
         
         if (showNotification) {
-            this.log(message, LogLevel.INFO, showNotification);
+        this.log(message, LogLevel.INFO, showNotification);
         }
     }
 
@@ -1479,4 +1481,4 @@ export class TcpClient {
         const value = pair.substring(colonIndex + 1).trim();
         return [key, value];
     }
-}
+} 

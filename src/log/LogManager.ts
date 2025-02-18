@@ -9,60 +9,76 @@ export enum LogLevel {
 
 export class LogManager {
     private static instance: LogManager;
-    private debugChannel: vscode.OutputChannel;
-    private serverChannel: vscode.OutputChannel;
-    private errorChannel: vscode.OutputChannel;
+    private outputChannel: vscode.OutputChannel;
 
-    private constructor() {
-        this.debugChannel = vscode.window.createOutputChannel('LPC服务器调试');
-        this.serverChannel = vscode.window.createOutputChannel('LPC服务器日志');
-        this.errorChannel = vscode.window.createOutputChannel('LPC服务器错误');
+    private constructor(outputChannel: vscode.OutputChannel) {
+        this.outputChannel = outputChannel;
+    }
+
+    static initialize(outputChannel: vscode.OutputChannel): void {
+        if (!LogManager.instance) {
+            LogManager.instance = new LogManager(outputChannel);
+        }
     }
 
     static getInstance(): LogManager {
         if (!LogManager.instance) {
-            LogManager.instance = new LogManager();
+            throw new Error('LogManager has not been initialized');
         }
         return LogManager.instance;
     }
 
-    log(message: string, level: LogLevel = LogLevel.INFO, context: string = '') {
-        const timestamp = new Date().toISOString();
-        const formattedMessage = `[${timestamp}] [${level}] ${context ? `[${context}] ` : ''}${message}`;
+    public getOutputChannel(): vscode.OutputChannel {
+        return this.outputChannel;
+    }
 
-        switch (level) {
-            case LogLevel.DEBUG:
-                this.debugChannel.appendLine(formattedMessage);
-                break;
-            case LogLevel.INFO:
-                this.serverChannel.appendLine(formattedMessage);
-                break;
-            case LogLevel.WARN:
-                this.serverChannel.appendLine(formattedMessage);
-                vscode.window.showWarningMessage(message);
-                break;
-            case LogLevel.ERROR:
-                this.errorChannel.appendLine(formattedMessage);
+    public log(message: string, level: LogLevel = LogLevel.INFO, context: string = '', showNotification: boolean = false) {
+        const timestamp = new Date().toISOString();
+        const prefix = level === LogLevel.ERROR ? '[错误]' : 
+                      level === LogLevel.DEBUG ? '[调试]' : 
+                      level === LogLevel.WARN ? '[警告]' : 
+                      '[信息]';
+        
+        const formattedMessage = `[${timestamp}] ${prefix} ${context ? `[${context}] ` : ''}${message}`;
+        this.outputChannel.appendLine(formattedMessage);
+
+        if (showNotification) {
+            if (level === LogLevel.ERROR) {
                 vscode.window.showErrorMessage(message);
-                break;
+            } else if (level === LogLevel.WARN) {
+                vscode.window.showWarningMessage(message);
+            } else {
+                vscode.window.showInformationMessage(message);
+            }
         }
     }
 
-    showDebugChannel() {
-        this.debugChannel.show();
+    public logConnection(message: string) {
+        this.log(message, LogLevel.INFO, 'Connection');
     }
 
-    showServerChannel() {
-        this.serverChannel.show();
+    public logProtocol(type: 'REQUEST' | 'RESPONSE', protocolId: number, data: any) {
+        this.log(`${type} | Protocol: ${protocolId} | ${JSON.stringify(data)}`, LogLevel.DEBUG, 'Protocol');
     }
 
-    showErrorChannel() {
-        this.errorChannel.show();
+    public logGame(message: string) {
+        this.log(message, LogLevel.INFO, 'Game');
+    }
+
+    public logError(error: Error | string, showNotification: boolean = true) {
+        const message = error instanceof Error ? error.message : error;
+        this.log(message, LogLevel.ERROR, 'Error', showNotification);
+        
+        if (error instanceof Error && error.stack) {
+            this.log(error.stack, LogLevel.DEBUG, 'Error');
+        }
+    }
+
+    public showAll() {
+        this.outputChannel.show(true);
     }
 
     dispose() {
-        this.debugChannel.dispose();
-        this.serverChannel.dispose();
-        this.errorChannel.dispose();
+        this.outputChannel.dispose();
     }
 } 

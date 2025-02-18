@@ -44,7 +44,7 @@ export class ServiceLocator {
     }
 
     private initializeServices() {
-        // 按依赖顺序初始化服务
+        // 使用已存在的输出通道
         const logManager = LogManager.getInstance();
         const configManager = ConfigManager.getInstance();
         const connectionState = ConnectionState.getInstance();
@@ -55,33 +55,22 @@ export class ServiceLocator {
         this.services.set('connectionState', connectionState);
         this.services.set('messageHandler', messageHandler);
         
-        // 创建消息通道适配器
-        const messageChannels = {
-            debug: {
-                appendLine: (line: string) => logManager.log(line, LogLevel.DEBUG),
-                show: () => logManager.showDebugChannel()
-            },
-            server: {
-                appendLine: (line: string) => logManager.log(line, LogLevel.INFO),
-                show: () => logManager.showServerChannel()
-            }
-        };
-        
         // 创建MessageProvider实例
         const messageProvider = new MessageProvider(this.context.extensionUri);
         
-        // 创建ButtonProvider实例，传入messageProvider
+        // 创建ButtonProvider实例
         const buttonProvider = new ButtonProvider(this.context.extensionUri, messageProvider);
         
         this.services.set('messageProvider', messageProvider);
         this.services.set('buttonProvider', buttonProvider);
         
-        // 使用ButtonProvider初始化TcpClient
+        // 使用LogManager的输出通道
         const tcpClient = new TcpClient(
-            messageChannels,
-            buttonProvider,  // 替换configManager
-            connectionState
+            logManager.getOutputChannel(),
+            buttonProvider,
+            messageProvider
         );
+        
         this.services.set('tcpClient', tcpClient);
         
         // 初始化CompileManager

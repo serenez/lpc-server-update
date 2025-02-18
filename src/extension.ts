@@ -4,6 +4,7 @@ import { MessageProvider } from './messageProvider';
 import { ButtonProvider } from './buttonProvider';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LogManager } from './log/LogManager';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
@@ -438,14 +439,15 @@ async function initializeConfig() {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-    console.log('正在激活扩展...');
+    console.log('插件初始化...');
     
-    // 创建两个独立的输出通道
-    const outputChannel = vscode.window.createOutputChannel('LPC服务器调试');
-    const serverLogChannel = vscode.window.createOutputChannel('LPC服务器日志');
-    
-    // 确保面板显示
+    // 创建输出通道
+    const outputChannel = vscode.window.createOutputChannel('LPC服务器');
+    // 自动显示输出面板
     outputChannel.show(true);
+    
+    // 初始化日志管理器
+    LogManager.initialize(outputChannel);
     
     // 创建视图提供者
     messageProvider = new MessageProvider(context.extensionUri);
@@ -473,20 +475,12 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // 创建TcpClient实例，传入两个不同的输出通道
-    tcpClient = new TcpClient({
-        debug: {
-            appendLine: (line: string) => outputChannel.appendLine(line),
-            show: () => outputChannel.show(false)
-        },
-        server: {
-            appendLine: (line: string) => {
-                serverLogChannel.appendLine(line);
-                messageProvider?.addMessage(line);
-            },
-            show: () => serverLogChannel.show(false)
-        }
-    }, buttonProvider, messageProvider);
+    // 创建TcpClient实例，使用统一的输出通道
+    tcpClient = new TcpClient(
+        outputChannel,
+        buttonProvider,
+        messageProvider
+    );
 
     // 初始化配置
     if (!await initializeConfig()) {
@@ -772,18 +766,18 @@ export async function activate(context: vscode.ExtensionContext) {
             const config = readConfig();
             
             // 添加调试日志
-            outputChannel.appendLine('==== 文件保存事件触发 ====');
-            outputChannel.appendLine(`保存的文件: ${document.fileName}`);
+            outputChannel.appendLine('==== 执行编译当前文件命令 ====');
+            outputChannel.appendLine(`原始文件路径: ${document.fileName}`);
             
             // 首先检查登录状态
             if (!tcpClient.isLoggedIn()) {
-                outputChannel.appendLine('角色未登录,跳过自动编译');
+                outputChannel.appendLine('角色未登录,跳过编译');
                 return;
             }
             
             // 然后检查连接状态
             if (!tcpClient.isConnected()) {
-                outputChannel.appendLine('服务器未连接,跳过自动编译');
+                outputChannel.appendLine('服务器未连接,跳过编译');
                 return;
             }
             
@@ -802,21 +796,19 @@ export async function activate(context: vscode.ExtensionContext) {
             
             try {
                 const filePath = document.uri.fsPath;
-                outputChannel.appendLine(`原始文件路径: ${filePath}`);
                 const mudPath = convertToMudPath(filePath);
                 outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
-                messageProvider?.addMessage(`自动编译文件: ${mudPath}`);
+                messageProvider?.addMessage(`编译文件: ${mudPath}`);
                 tcpClient.sendUpdateCommand(mudPath);
                 outputChannel.appendLine('编译命令已发送');
             } catch (error) {
                 outputChannel.appendLine(`编译失败: ${error}`);
-                messageProvider?.addMessage(`自动编译失败: ${error}`);
+                messageProvider?.addMessage(`编译失败: ${error}`);
             }
-            outputChannel.appendLine('==== 文件保存事件处理完成 ====\n');
         })
     );
 
-    console.log('扩展激活完成');
+    console.log('插件激活完成');
 }
 
 export function deactivate() {

@@ -84,12 +84,6 @@ function readConfig(): Config {
                 });
             }
 
-            // 添加配置加载信息
-            messageProvider?.addMessage('配置文件加载成功');
-            messageProvider?.addMessage(`当前编码: ${result.encoding}`);
-            messageProvider?.addMessage(`当前登录KEY: ${result.loginKey || 'buyi-ZMuy'}`);
-            messageProvider?.addMessage(`登录信息${result.loginWithEmail ? '包含' : '不包含'}邮箱`);
-
             return result;
         }
 

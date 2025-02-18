@@ -35,7 +35,7 @@
     "vscode": "^1.60.0"
   },
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "contributes": {
     "configuration": {

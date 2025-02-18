@@ -235,314 +235,373 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         });
         const showIcons = config.get<boolean>('messages.showIcons', true);
 
+        const style = `
+            body {
+                padding: 0;
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            /* 按钮容器 */
+            .button-container {
+                position: sticky;
+                top: 0;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                z-index: 1000;
+                background: var(--vscode-editor-background);
+                padding: 6px 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                order: -1;
+                min-height: 32px;
+                flex-wrap: nowrap;
+            }
+
+            /* 消息容器 */
+            #message-container {
+                flex: 1;
+                overflow-y: auto;
+                padding: 8px;
+                margin-top: 4px;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            /* 消息样式 */
+            .message {
+                margin: 0;
+                padding: 8px 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                line-height: 1.5;
+                transition: all 0.2s ease;
+                border: 1px solid transparent;
+                background: var(--vscode-editor-background);
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+
+            .message-header {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-bottom: 4px;
+                opacity: 0.8;
+            }
+
+            .message:hover .message-header {
+                opacity: 1;
+            }
+
+            .timestamp {
+                color: var(--vscode-descriptionForeground);
+                font-size: 10px;
+                font-family: var(--vscode-editor-font-family);
+                padding: 1px 4px;
+                border-radius: 2px;
+                background: var(--vscode-editor-lineHighlightBackground);
+                white-space: nowrap;
+            }
+
+            .message-content {
+                font-size: 14px;
+                line-height: 1.5;
+                padding-left: 2px;
+                color: var(--vscode-editor-foreground) !important;
+            }
+
+            /* 消息类型样式 */
+            .success { 
+                border-left: 3px solid #4dc352;
+                background: rgba(46, 160, 67, 0.08);
+            }
+
+            .error { 
+                border-left: 3px solid #ff5a52;
+                background: rgba(255, 90, 82, 0.08);
+            }
+
+            .warning { 
+                border-left: 3px solid #e8a317;
+                background: rgba(232, 163, 23, 0.08);
+            }
+
+            .info { 
+                border-left: 3px solid #69b5ff;
+                background: rgba(105, 181, 255, 0.08);
+            }
+
+            .system { 
+                border-left: 3px solid #c89fff;
+                background: rgba(200, 159, 255, 0.08);
+            }
+
+            .eval-message {
+                border-left: 3px solid #ff9100;
+                background: rgba(255, 145, 0, 0.08);
+            }
+
+            /* 悬停效果 */
+            .message:hover {
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                transform: translateX(2px);
+            }
+
+            /* 错误链接样式 */
+            .error-link {
+                font-size: 14px;
+                color: var(--vscode-editor-foreground) !important;
+            }
+
+            .error-file {
+                color: var(--vscode-textLink-foreground) !important;
+                font-weight: 500;
+                display: block;
+                margin: 2px 0;
+            }
+
+            .error-line {
+                color: var(--vscode-errorForeground) !important;
+                font-weight: 500;
+                display: block;
+                margin: 2px 0;
+            }
+
+            .error-message {
+                color: var(--vscode-editor-foreground) !important;
+                font-weight: 500;
+                display: block;
+                margin: 2px 0;
+            }
+
+            /* 配置按钮 */
+            .config-button {
+                height: 22px;
+                padding: 0 8px;
+                font-size: 11px;
+                border-radius: 3px;
+                border: 1px solid var(--vscode-button-border);
+                background: var(--vscode-button-secondaryBackground);
+                color: var(--vscode-button-secondaryForeground);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+                transition: all 0.2s ease;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
+                flex: 1;
+                opacity: 0.8;
+            }
+
+            .config-button:hover {
+                opacity: 1;
+                background: var(--vscode-button-secondaryHoverBackground);
+                transform: translateY(-1px);
+            }
+
+            /* UTF8编码按钮 */
+            .config-button.utf8 {
+                background: rgba(33, 150, 243, 0.1);
+                color: #2196F3;
+                border: 1px solid rgba(33, 150, 243, 0.2);
+            }
+            .config-button.utf8:hover {
+                background: rgba(33, 150, 243, 0.15);
+            }
+
+            /* GBK编码按钮 */
+            .config-button.gbk {
+                background: rgba(156, 39, 176, 0.1);
+                color: #9C27B0;
+                border: 1px solid rgba(156, 39, 176, 0.2);
+            }
+            .config-button.gbk:hover {
+                background: rgba(156, 39, 176, 0.15);
+            }
+
+            /* 登录KEY按钮 */
+            .config-button.settings {
+                background: rgba(3, 169, 244, 0.1);
+                color: #03A9F4;
+                border: 1px solid rgba(3, 169, 244, 0.2);
+            }
+            .config-button.settings:hover {
+                background: rgba(3, 169, 244, 0.15);
+            }
+
+            /* 带邮箱按钮 */
+            .config-button.with-email {
+                background: rgba(76, 175, 80, 0.1);
+                color: #4CAF50;
+                border: 1px solid rgba(76, 175, 80, 0.2);
+            }
+            .config-button.with-email:hover {
+                background: rgba(76, 175, 80, 0.15);
+            }
+
+            /* 不带邮箱按钮 */
+            .config-button.without-email {
+                background: rgba(255, 152, 0, 0.1);
+                color: #FF9800;
+                border: 1px solid rgba(255, 152, 0, 0.2);
+            }
+            .config-button.without-email:hover {
+                background: rgba(255, 152, 0, 0.15);
+            }
+
+            /* 图标按钮 */
+            .icon-button {
+                width: 22px;
+                height: 22px;
+                min-width: 22px;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 1px solid var(--vscode-button-border);
+                border-radius: 3px;
+                background: transparent;
+                color: var(--vscode-foreground);
+                cursor: pointer;
+                transition: all 0.2s ease;
+                flex-shrink: 0;
+                font-size: 12px;
+                opacity: 0.8;
+            }
+
+            .icon-button:hover {
+                opacity: 1;
+                background: var(--vscode-button-secondaryBackground);
+                transform: translateY(-1px);
+            }
+
+            .icon-button.delete {
+                color: var(--vscode-errorForeground);
+            }
+
+            .icon-button.delete:hover {
+                background: rgba(255, 77, 79, 0.1);
+            }
+
+            .icon-button.lock {
+                color: var(--vscode-foreground);
+            }
+
+            .icon-button.lock.active {
+                color: #2196F3;
+                background: rgba(33, 150, 243, 0.1);
+                opacity: 1;
+            }
+
+            .icon-button.lock:hover {
+                opacity: 1;
+                background: var(--vscode-button-secondaryBackground);
+            }
+
+            /* 滚动条样式 */
+            #message-container::-webkit-scrollbar {
+                width: 6px;
+            }
+
+            #message-container::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            #message-container::-webkit-scrollbar-thumb {
+                background: var(--vscode-scrollbarSlider-background);
+                border-radius: 3px;
+            }
+
+            #message-container::-webkit-scrollbar-thumb:hover {
+                background: var(--vscode-scrollbarSlider-hoverBackground);
+            }
+
+            /* 错误消息样式 */
+            .error-details {
+                background: var(--vscode-editor-inactiveSelectionBackground);
+                border-radius: 4px;
+                padding: 8px;
+                margin-top: 4px;
+            }
+
+            .error-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--vscode-errorForeground);
+                margin-bottom: 6px;
+            }
+
+            .error-file {
+                color: var(--vscode-textLink-foreground);
+                font-weight: 500;
+                padding: 4px 0;
+            }
+
+            .error-line {
+                color: var(--vscode-errorForeground);
+                font-weight: 500;
+                padding: 4px 0;
+            }
+
+            .error-message {
+                color: var(--vscode-editor-foreground);
+                font-weight: 500;
+                padding: 4px 0;
+            }
+
+            .error-details:hover {
+                background: var(--vscode-editor-selectionBackground);
+            }
+
+            .error-link {
+                cursor: pointer;
+                padding: 2px;
+                border-radius: 4px;
+            }
+
+            .error-link:hover .error-details {
+                background: var(--vscode-editor-selectionBackground);
+            }
+
+            @font-face {
+                font-family: "codicon";
+                src: url(${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode/codicons', 'dist', 'codicon.ttf'))});
+            }
+
+            .codicon {
+                font: normal normal normal 16px/1 codicon;
+                display: inline-block;
+                text-decoration: none;
+                text-rendering: auto;
+                text-align: center;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                user-select: none;
+                -webkit-user-select: none;
+                -ms-user-select: none;
+                margin-right: 4px;
+            }
+
+            .codicon-file:before { content: "\\ea7b"; }
+            .codicon-location:before { content: "\\ea59"; }
+            .codicon-warning:before { content: "\\ea6c"; }
+        `;
+
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <style>
-                    body {
-                        padding: 10px;
-                        font-family: var(--vscode-font-family);
-                        font-size: 13px;
-                        color: var(--vscode-foreground);
-                        position: relative;
-                        height: 100vh;
-                        margin: 0;
-                        box-sizing: border-box;
-                        background: var(--vscode-editor-background);
-                        overflow: hidden;
-                    }
-                    #message-container {
-                        display: flex;
-                        flex-direction: column;
-                        height: 100%;
-                        overflow-y: auto;
-                        padding-top: 50px;
-                        padding-bottom: 10px;
-                        gap: 6px;
-                        box-sizing: border-box;
-                    }
-                    #message-container::-webkit-scrollbar {
-                        width: 6px;
-                    }
-                    #message-container::-webkit-scrollbar-track {
-                        background: transparent;
-                    }
-                    #message-container::-webkit-scrollbar-thumb {
-                        background: var(--vscode-scrollbarSlider-background);
-                        border-radius: 3px;
-                    }
-                    #message-container::-webkit-scrollbar-thumb:hover {
-                        background: var(--vscode-scrollbarSlider-hoverBackground);
-                    }
-                    .message {
-                        margin: 0;
-                        padding: 6px 10px;
-                        border-radius: 4px;
-                        word-break: break-all;
-                        line-height: 1.4;
-                        display: flex;
-                        align-items: flex-start;
-                        gap: 6px;
-                        transition: all 0.2s ease;
-                        border: 1px solid transparent;
-                        background: var(--vscode-editor-background);
-                        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-                        font-size: 13px;
-                    }
-                    .message.has-code {
-                        display: block;
-                    }
-                    .message.has-code .timestamp,
-                    .message.has-code .icon-container {
-                        display: inline-block;
-                        vertical-align: top;
-                        margin-bottom: 6px;
-                    }
-                    .message:hover {
-                        background: var(--vscode-editor-background);
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    }
-                    .success:hover { 
-                        color: #4dc352;
-                        border-color: #4dc352;
-                        background: rgba(46, 160, 67, 0.12);
-                    }
-                    .error:hover { 
-                        color: #ff5a52;
-                        border-color: #ff5a52;
-                        background: rgba(255, 90, 82, 0.12);
-                    }
-                    .warning:hover { 
-                        color: #e8a317;
-                        border-color: #e8a317;
-                        background: rgba(232, 163, 23, 0.12);
-                    }
-                    .info:hover { 
-                        color: #69b5ff;
-                        border-color: #69b5ff;
-                        background: rgba(105, 181, 255, 0.12);
-                    }
-                    .system:hover { 
-                        color: #c89fff;
-                        border-color: #c89fff;
-                        background: rgba(200, 159, 255, 0.12);
-                    }
-                    .temp-message:hover {
-                        background: rgba(88, 166, 255, 0.1);
-                        border-color: #58a6ff;
-                    }
-                    .timestamp {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 12px;
-                        font-family: var(--vscode-editor-font-family);
-                        padding: 1px 4px;
-                        border-radius: 2px;
-                        background: var(--vscode-editor-lineHighlightBackground);
-                        white-space: nowrap;
-                        opacity: 0.9;
-                    }
-                    .message:hover .timestamp {
-                        opacity: 1;
-                    }
-                    .icon-container {
-                        display: ${showIcons ? 'inline-flex' : 'none'};
-                        align-items: center;
-                        justify-content: center;
-                        width: 16px;
-                        height: 16px;
-                        font-size: 14px;
-                        opacity: 0.9;
-                    }
-                    .message:hover .icon-container {
-                        opacity: 1;
-                    }
-                    .message-content {
-                        flex: 1;
-                        line-height: 1.5;
-                    }
-                    .code-block {
-                        margin: 6px 0 0 0;
-                        padding: 8px 10px;
-                        background: var(--vscode-textCodeBlock-background);
-                        border-radius: 3px;
-                        font-family: var(--vscode-editor-font-family);
-                        font-size: 12px;
-                        line-height: 1.4;
-                        overflow-x: auto;
-                        white-space: pre;
-                    }
-                    .message:hover .code-block {
-                        background: var(--vscode-textCodeBlock-background);
-                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                    }
-                    .code-block code {
-                        color: var(--vscode-textPreformat-foreground);
-                    }
-                    .success { 
-                        color: #4dc352;
-                        border-left: 2px solid #4dc352;
-                        background: rgba(46, 160, 67, 0.08);
-                    }
-                    .error { 
-                        color: #ff5a52;
-                        border-left: 2px solid #ff5a52;
-                        background: rgba(255, 90, 82, 0.08);
-                    }
-                    .warning { 
-                        color: #e8a317;
-                        border-left: 2px solid #e8a317;
-                        background: rgba(232, 163, 23, 0.08);
-                    }
-                    .info { 
-                        color: #69b5ff;
-                        border-left: 2px solid #69b5ff;
-                        background: rgba(105, 181, 255, 0.08);
-                    }
-                    .system { 
-                        color: #c89fff;
-                        border-left: 2px solid #c89fff;
-                        background: rgba(200, 159, 255, 0.08);
-                    }
-                    .temp-message {
-                        background: var(--vscode-editor-selectionBackground);
-                        border-left: 3px solid var(--vscode-focusBorder);
-                        font-weight: 500;
-                    }
-                    .button-container {
-                        position: fixed;
-                        top: 10px;
-                        right: 10px;
-                        display: flex;
-                        gap: 6px;
-                        z-index: 1000;
-                        background: var(--vscode-editor-background);
-                        padding: 4px;
-                        border-radius: 4px;
-                    }
-                    .config-button {
-                        padding: 2px 6px;
-                        background: var(--vscode-button-secondaryBackground);
-                        color: var(--vscode-button-secondaryForeground);
-                        border: none;
-                        border-radius: 3px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        display: flex;
-                        align-items: center;
-                        gap: 4px;
-                        opacity: 0.9;
-                        transition: all 0.2s ease;
-                        white-space: nowrap;
-                        min-width: fit-content;
-                        font-family: var(--vscode-font-family);
-                        line-height: 16px;
-                        height: 20px;
-                    }
-                    .config-button:hover {
-                        opacity: 1;
-                    }
-                    .config-button.utf8 {
-                        background: rgba(33, 150, 243, 0.2);
-                        color: #2196F3;
-                    }
-                    .config-button.utf8:hover {
-                        background: rgba(33, 150, 243, 0.3);
-                    }
-                    .config-button.gbk {
-                        background: rgba(156, 39, 176, 0.2);
-                        color: #9C27B0;
-                    }
-                    .config-button.gbk:hover {
-                        background: rgba(156, 39, 176, 0.3);
-                    }
-                    .config-button.with-email {
-                        background: rgba(76, 175, 80, 0.2);
-                        color: #4CAF50;
-                    }
-                    .config-button.with-email:hover {
-                        background: rgba(76, 175, 80, 0.3);
-                    }
-                    .config-button.without-email {
-                        background: rgba(255, 152, 0, 0.2);
-                        color: #FF9800;
-                    }
-                    .config-button.without-email:hover {
-                        background: rgba(255, 152, 0, 0.3);
-                    }
-                    .icon-button {
-                        padding: 2px;
-                        width: 20px;
-                        height: 20px;
-                        background: transparent;
-                        border: none;
-                        cursor: pointer;
-                        font-size: 14px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        opacity: 0.7;
-                        transition: all 0.2s ease;
-                        color: var(--vscode-foreground);
-                        border-radius: 3px;
-                    }
-                    .icon-button:hover {
-                        opacity: 1;
-                        background: var(--vscode-button-secondaryBackground);
-                    }
-                    .icon-button.delete {
-                        color: var(--vscode-errorForeground);
-                    }
-                    .icon-button.delete:hover {
-                        background: rgba(255,0,0,0.1);
-                    }
-                    .icon-button.active {
-                        opacity: 1;
-                        color: #2196F3;
-                        background: rgba(33,150,243,0.1);
-                    }
-                    .icon-button.settings {
-                        color: #64B5F6;
-                    }
-                    .icon-button.settings:hover {
-                        background: rgba(100, 181, 246, 0.2);
-                    }
-                    .error-link {
-                        cursor: pointer;
-                        background: none;
-                        border: none;
-                        padding: 4px 8px;
-                        margin: 0;
-                        font: inherit;
-                        color: inherit;
-                        text-align: left;
-                        display: block;
-                        width: 100%;
-                        border-radius: 3px;
-                        transition: all 0.2s ease;
-                    }
-                    
-                    .error-link:hover {
-                        background: rgba(255, 0, 0, 0.1);
-                    }
-                    
-                    .error-file, .error-line, .error-message {
-                        display: block;
-                        padding: 2px 0;
-                    }
-                    
-                    .error-file {
-                        color: #40a9ff;
-                    }
-                    
-                    .error-line {
-                        color: #ff7875;
-                    }
-                    
-                    .error-message {
-                        color: #ff4d4f;
-                    }
+                    ${style}
                 </style>
             </head>
             <body>
@@ -553,13 +612,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <button class="config-button settings" id="settingsButton" title="设置登录KEY">
                         登录KEY
                     </button>
-                    <button class="config-button" id="encodingButton" title="当前编码">
+                    <button class="config-button ${currentEncoding === 'UTF8' ? 'utf8' : 'gbk'}" id="encodingButton" title="当前编码">
                         ${currentEncoding}
                     </button>
-                    <button class="config-button" id="loginEmailButton" title="登录邮箱状态">
+                    <button class="config-button ${loginWithEmail ? 'with-email' : 'without-email'}" id="loginEmailButton" title="登录邮箱状态">
                         登录:${loginWithEmail ? '含邮箱' : '不含'}
                     </button>
-                    <button class="icon-button" id="scrollLockButton" title="自动滚动">
+                    <button class="icon-button lock active" id="scrollLockButton" title="自动滚动已开启">
                         🔒
                     </button>
                     <button class="icon-button delete" id="clearButton" title="清除消息">
@@ -789,10 +848,11 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         let extraClass = '';
         let formattedMessage = message;
 
-        // 检查消息是否已经包含emoji图标或特殊Unicode字符
-        const hasEmoji = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{2300}-\u{23FF}]|[\u{2B00}-\u{2BFF}]|[\u{E000}-\u{F8FF}]/u.test(message);
-
-        if (message.includes('成功') || message.includes('完成')) {
+        // 检查消息类型
+        if (message.includes('❗ EVAL指令:')) {
+            type = 'eval';  // 新增 eval 类型
+            extraClass = ' eval-message';  // 添加特殊类名
+        } else if (message.includes('成功') || message.includes('完成')) {
             type = 'success';
         } else if (message.includes('错误') || message.includes('失败')) {
             type = 'error';
@@ -826,16 +886,21 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const errorMatch = message.match(/❌ 编译错误:\s*文件:\s*([^\n]+)\s*行号:\s*(\d+)\s*错误:\s*(.*)/);
         if (errorMatch) {
             const [, filePath, line, errorMessage] = errorMatch;
-            // 添加可点击的链接样式，使用 button 而不是 span
+            // 修改编译错误消息模板
             const messageHtml = `<div class="message error${extraClass}">
-                <span class="timestamp">[${timestamp}]</span>
-                ${showIcons ? `<span class="icon-container">❌</span>` : ''}
-                <button class="error-link" data-file="${filePath}" data-line="${line}">
-                    编译错误: 
-                    <span class="error-file">文件: ${filePath}</span>
-                    <span class="error-line">行号: ${line}</span>
-                    <span class="error-message">错误: ${errorMessage}</span>
-                </button>
+                <div class="message-header">
+                    <span class="timestamp">[${timestamp}]</span>
+                </div>
+                <div class="message-content">
+                    <div class="error-link" data-file="${filePath}" data-line="${line}">
+                        <div class="error-title">❌ 编译错误</div>
+                        <div class="error-details">
+                            <div class="error-file">文件: ${filePath}</div>
+                            <div class="error-line">位置: 第 ${line} 行</div>
+                            <div class="error-message">错误: ${errorMessage}</div>
+                        </div>
+                    </div>
+                </div>
             </div>`;
             
             this._messages.push(messageHtml);
@@ -847,11 +912,12 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             });
         } else {
             const messageHtml = `<div class="message ${type}${extraClass}">
-                <span class="timestamp">[${timestamp}]</span>
-                ${showIcons && !hasEmoji ? `<span class="icon-container">💬</span>` : ''}
-                <span class="message-content">${formattedMessage}</span>
+                <div class="message-header">
+                    <span class="timestamp">[${timestamp}]</span>
+                </div>
+                <div class="message-content">${formattedMessage}</div>
             </div>`;
-
+            
             this._messages.push(messageHtml);
             this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
         }
@@ -859,5 +925,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     public dispose() {
         // 清理资源
+        this._messages = [];
+        this._view = undefined;
     }
-} 
+}

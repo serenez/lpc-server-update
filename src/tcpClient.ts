@@ -52,8 +52,7 @@ export class TcpClient implements IDisposable {
     private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
     private diagnosticCollection: vscode.DiagnosticCollection | null = null;
     private configManager: ConfigManager;
-    private isCollectingError: boolean = false;
-    private firstErrorFile: string = ''; // 添加变量存储第一个错误文件路径
+    private firstErrorFile: string = '';
     private errorLine: number = 0;
     private errorMessage: string = '';
     private isIgnoringStackTrace: boolean = false;
@@ -87,7 +86,6 @@ export class TcpClient implements IDisposable {
             this.clearDiagnostics();
             
             // 重置编译错误相关状态
-            this.isCollectingError = false;
             this.firstErrorFile = '';
             this.errorLine = 0;
             this.errorMessage = '';
@@ -226,67 +224,69 @@ export class TcpClient implements IDisposable {
             if (message.startsWith('\x1b012')) {
                 return;
             }
-            
-            // 检查是否正在收集编译错误
-            if (this.isCollectingError) {
-                this.log(`[错误收集] 当前消息: ${message}`, LogLevel.DEBUG);
-                
-                // 移除 .c 后缀再比较
-                const expectedPath = this.firstErrorFile.replace(/\.c$/, '');
-                this.log(`[错误收集] 结束标记为: Error in loading object '${expectedPath}'`, LogLevel.DEBUG);
-                
-                if (message === `*Error in loading object '${expectedPath}'`) {
-                    this.log('[错误收集] 检测到结束标记', LogLevel.DEBUG);
-                    // 结束收集
-                    this.isCollectingError = false;
-                    if (this.messageProvider) {
-                        const errorMsg = `❌ 编译错误:\n文件: ${this.firstErrorFile}\n行号: ${this.errorLine}\n错误: ${this.errorMessage}`;
-                        this.log('[错误收集] 准备显示错误信息', LogLevel.DEBUG);
-                        this.messageProvider.addMessage(errorMsg);
-                        this.log(errorMsg, LogLevel.ERROR, false);
-                        
-                        // 在编辑器中显示错误
-                        this.showDiagnostics(this.firstErrorFile, this.errorLine - 1, this.errorMessage);
-                    }
-                    // 重置错误相关状态
-                    this.log('[错误收集] 重置错误状态', LogLevel.DEBUG);
-                    this.firstErrorFile = '';
-                    this.errorLine = 0;
-                    this.errorMessage = '';
-                    return;
-                }
-                this.log('[错误收集] 继续收集', LogLevel.DEBUG);
+
+            // 过滤单个 ^ 符号的消息
+            if (message.trim() === '^') {
+                return;  // 完全跳过，不记录日志
+            }
+
+            // 处理 eval 命令结果
+            if (message.startsWith('mixed eval(object me) { return ')) {
+                const evalResult = message.replace('mixed eval(object me) { return ', '');
+                const evalMsg = `❗ EVAL指令: ${evalResult}`;
+                this.messageProvider?.addMessage(evalMsg);
+                this.log(evalMsg, LogLevel.INFO);
                 return;
             }
 
-            // 检查是否开始编译错误
+            // 过滤不需要在边栏显示的错误堆栈信息
+            if (message.startsWith('程式：') || 
+                message.startsWith('物件：') || 
+                message.startsWith('呼叫来自：') ||
+                message.startsWith('错误讯息被拦截：') ||
+                message.startsWith('执行时段错误：') ||
+                message.startsWith('*Error in loading')) {
+                // 只在输出面板显示
+                this.log(message, LogLevel.DEBUG);
+                return;
+            }
+
+            // 检查是否是编译错误
             const errorMatch = message.match(/编译时段错误：([^:]+\.c)\s+line\s+(\d+):\s*(.*)/);
             if (errorMatch) {
-                this.log('[错误处理] 检测到编译错误开始', LogLevel.DEBUG);
                 const [, filePath, lineNum, errorMessage] = errorMatch;
                 
+                // 处理 debug_eval_file.c 的错误显示
+                if (filePath === '/debug_eval_file.c') {
+                    // 显示友好的 eval 错误信息
+                    const evalErrorMsg = `❌ Eval指令执行错误: ${errorMessage}`;
+                    this.messageProvider?.addMessage(evalErrorMsg);
+                    this.log(evalErrorMsg, LogLevel.ERROR, false);
+                    return;
+                }
+                
                 // 重置之前的错误状态
-                this.log('[错误处理] 清除之前的诊断信息', LogLevel.DEBUG);
                 this.clearDiagnostics();
                 
                 // 设置新的错误信息
-                this.log(`[错误处理] 设置错误信息: ${filePath}:${lineNum}`, LogLevel.DEBUG);
                 this.firstErrorFile = filePath;
                 this.errorLine = parseInt(lineNum);
                 this.errorMessage = errorMessage;
                 
-                // 开始收集错误
-                this.log('[错误处理] 开始错误收集', LogLevel.DEBUG);
-                this.isCollectingError = true;
+                // 立即显示错误信息
+                const errorMsg = `❌ 编译错误:\n文件: ${filePath}\n行号: ${this.errorLine}\n错误: ${errorMessage}`;
+                this.messageProvider?.addMessage(errorMsg);
+                this.log(errorMsg, LogLevel.ERROR, false);
+                
+                // 在编辑器中显示错误
+                this.showCompileError(filePath, this.errorLine, errorMessage);
                 return;
             }
 
             // 检查编译成功消息
             if (message.includes('重新编译完毕')) {
-                this.log('[编译] 检测到编译完成', LogLevel.DEBUG);
                 // 清除所有错误状态
                 this.clearDiagnostics();
-                this.isCollectingError = false;
                 this.firstErrorFile = '';
                 this.errorLine = 0;
                 this.errorMessage = '';
@@ -864,14 +864,33 @@ export class TcpClient implements IDisposable {
     }
 
     public disconnect() {
-        this.resetState();
-        if (this.socket) {
-            this.socket.destroy();
-            this.socket = null;
+        try {
+            // 重置所有状态
+            this.connected = false;
+            this.loggedIn = false;
+            this.pendingCommand = false;
+            
+            // 重置编译错误相关状态
+            this.firstErrorFile = '';
+            this.errorLine = 0;
+            this.errorMessage = '';
+            
+            // 清理诊断信息
+            this.clearDiagnostics();
+            
+            // 关闭socket
+            if (this.socket) {
+                this.socket.destroy();
+                this.socket = null;
+            }
+            
+            // 更新按钮状态
+            this.buttonProvider.updateConnectionState(false);
+            
+            this.log('已断开服务器连接', LogLevel.INFO);
+        } catch (error) {
+            this.log(`断开连接失败: ${error}`, LogLevel.ERROR);
         }
-        this.connected = false;
-        this.loggedIn = false;
-        this.buttonProvider.updateConnectionState(false);
     }
 
     isConnected(): boolean {
@@ -1554,7 +1573,6 @@ export class TcpClient implements IDisposable {
     // 添加状态重置方法
     public resetState() {
         this.pendingCommand = false;
-        this.isCollectingError = false;
         this.firstErrorFile = '';
         this.errorLine = 0;
         this.errorMessage = '';

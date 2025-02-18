@@ -87,7 +87,7 @@ if (arg != sha1("buyi-SerenezZmuy") && 你的原有判断条件) {
 // eval.c - 自定义eval命令实现
 
 inherit _CLEAN_UP;
-
+int help(object me);
 /*
  * eval命令主函数
  * 用于执行LPC代码片段并返回结果

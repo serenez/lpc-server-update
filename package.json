@@ -1,7 +1,7 @@
 {
   "name": "lpc-server-update",
   "displayName": "LPC-Server-UPDATE MUD工具",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "用于连接和管理LPC游戏服务器的VS Code扩展",
   "publisher": "BUYI-ZMuy",
   "author": {
@@ -24,6 +24,13 @@
   ],
   "icon": "images/icon.png",
   "main": "dist/extension.js",
+  "extensionKind": ["workspace", "ui"],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
@@ -35,7 +42,13 @@
     "vscode": "^1.60.0"
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:game-server-compiler.connect",
+    "onCommand:game-server-compiler.compileCurrentFile",
+    "onCommand:game-server-compiler.compileDir",
+    "onCommand:game-server-compiler.sendCommand",
+    "onCommand:game-server-compiler.eval",
+    "onCommand:game-server-compiler.restart"
   ],
   "contributes": {
     "configuration": {

@@ -109,14 +109,96 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         }
         
         await this.saveCustomCommands();
-        this.updateView();
+        
+        // 立即更新WebView
+        if (this._view) {
+            // 生成新的命令HTML
+            const commandsHtml = this.generateCommandsHtml(isEval);
+            
+            // 发送更新消息到WebView
+            this._view.webview.postMessage({
+                type: 'updateCommands',
+                isEval: isEval,
+                html: commandsHtml
+            });
+        }
+    }
+
+    // 添加新方法：生成命令HTML
+    private generateCommandsHtml(isEval: boolean): string {
+        const commands = isEval ? this._customEvals : this._customCommands;
+        return commands.map((cmd, index) => `
+            <div class="dropdown-item" data-command="${this.escapeHtml(cmd.command)}">
+                <span class="button-icon">📎</span>
+                <span>${this.escapeHtml(cmd.name)}</span>
+                <div class="button-group">
+                    <span class="edit-button" data-index="${index}" title="编辑">✏️</span>
+                    <span class="delete-button" data-index="${index}" title="删除">🗑️</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // 添加HTML转义方法
+    private escapeHtml(text: string): string {
+        const map: {[key: string]: string} = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
 
     private async deleteCustomCommand(index: number, isEval: boolean = false) {
         const commands = isEval ? this._customEvals : this._customCommands;
         commands.splice(index, 1);
         await this.saveCustomCommands();
-        this.updateView();
+        
+        // 立即更新WebView
+        if (this._view) {
+            const commandsHtml = this.generateCommandsHtml(isEval);
+            this._view.webview.postMessage({
+                type: 'updateCommands',
+                isEval: isEval,
+                html: commandsHtml
+            });
+        }
+    }
+
+    private async editCustomCommand(index: number, isEval: boolean = false) {
+        const commands = isEval ? this._customEvals : this._customCommands;
+        const command = commands[index];
+        
+        if (!command) return;
+
+        const name = await vscode.window.showInputBox({
+            prompt: `修改${isEval ? 'Eval命令' : '自定义命令'}名称`,
+            value: command.name,
+            placeHolder: '例如: 查看在线玩家'
+        });
+        if (!name) return;
+
+        const commandStr = await vscode.window.showInputBox({
+            prompt: `修改${isEval ? 'Eval命令' : '自定义命令'}内容`,
+            value: command.command,
+            placeHolder: isEval ? 'memory_info()' : 'users'
+        });
+        if (!commandStr) return;
+
+        commands[index] = { name, command: commandStr };
+        await this.saveCustomCommands();
+        
+        // 立即更新WebView
+        if (this._view) {
+            const commandsHtml = this.generateCommandsHtml(isEval);
+            this._view.webview.postMessage({
+                type: 'updateCommands',
+                isEval: isEval,
+                html: commandsHtml
+            });
+        }
     }
 
     resolveWebviewView(
@@ -158,6 +240,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         case 'addCustomCommand':
                             this._outputChannel.appendLine(`添加${message.isEval ? 'Eval' : '自定义'}命令`);
                             await this.addCustomCommand(message.isEval);
+                            break;
+                        case 'editCustomCommand':
+                            this._outputChannel.appendLine(`编辑${message.isEval ? 'Eval' : '自定义'}命令: index=${message.index}`);
+                            await this.editCustomCommand(message.index, message.isEval);
                             break;
                         case 'deleteCustomCommand':
                             this._outputChannel.appendLine(`删除${message.isEval ? 'Eval' : '自定义'}命令: index=${message.index}`);
@@ -215,70 +301,87 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private escapeHtml(text: string): string {
-        return text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
-
     private _getHtmlForWebview(webview: vscode.Webview): string {
         const buttonStyle = `
             body {
-                padding: 10px;
+                padding: 16px;
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 12px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
+            
             .button-row {
                 display: flex;
-                gap: 8px;
+                gap: 12px;
                 width: 100%;
             }
+            
             .button-row button {
                 flex: 1;
-                min-width: 0;  /* 防止按钮溢出 */
-                white-space: nowrap;  /* 防止文字换行 */
+                min-width: 0;
             }
+            
             button {
-                padding: 8px 16px;
+                padding: 10px 18px;
                 background: var(--vscode-button-background);
                 color: var(--vscode-button-foreground);
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 gap: 8px;
                 font-size: 13px;
-                transition: all 0.2s ease;
-                min-height: 32px;
+                font-weight: 500;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                min-height: 36px;
+                position: relative;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
             }
+            
             button:not(:disabled):hover {
                 background: var(--vscode-button-hoverBackground);
+                transform: translateY(-1px);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+                            0 4px 8px rgba(0, 0, 0, 0.1);
             }
+            
+            button:not(:disabled):active {
+                transform: translateY(0);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+            }
+            
             button:disabled {
-                opacity: 0.5;
+                opacity: 0.6;
                 cursor: not-allowed;
+                filter: saturate(0.8);
             }
+            
             .connected {
                 background: var(--vscode-statusBarItem-errorBackground);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
             }
+            
             .button-icon {
                 font-size: 16px;
+                line-height: 1;
             }
+            
             .divider {
                 height: 1px;
                 background: var(--vscode-panel-border);
-                margin: 4px 0;
+                margin: 8px 0;
+                opacity: 0.3;
             }
+            
             .dropdown {
                 position: relative;
                 width: 100%;
             }
+            
             .dropdown-button {
                 width: 100%;
                 text-align: left;
@@ -286,77 +389,159 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 background: var(--vscode-button-secondaryBackground);
                 color: var(--vscode-button-secondaryForeground);
             }
+            
             .dropdown-content {
                 display: none;
                 position: relative;
-                background: var(--vscode-dropdown-background);
+                background: color-mix(in srgb, var(--vscode-dropdown-background) 80%, transparent);
                 border: 1px solid var(--vscode-dropdown-border);
-                border-radius: 4px;
-                margin-top: 4px;
+                border-radius: 10px;
+                margin-top: 6px;
                 overflow: hidden;
-                padding: 4px;
+                padding: 6px;
                 width: 100%;
                 box-sizing: border-box;
+                backdrop-filter: blur(20px);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                animation: dropdownFadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
+            
+            @keyframes dropdownFadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-4px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            
             .dropdown.open .dropdown-content {
                 display: block;
             }
+            
             .dropdown-items-container {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 4px;
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 6px;
                 width: 100%;
                 box-sizing: border-box;
                 padding: 0;
                 margin: 0;
             }
+            
             .dropdown-item {
-                flex: 0 0 calc(50% - 2px);
                 display: flex;
                 align-items: center;
-                padding: 6px 12px;
+                padding: 8px 14px;
                 gap: 8px;
                 cursor: pointer;
-                transition: all 0.2s ease;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 box-sizing: border-box;
-                background: var(--vscode-button-secondaryBackground);
-                border-radius: 4px;
-                min-height: 32px;
-                flex-shrink: 0;
+                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 90%, transparent);
+                border-radius: 6px;
+                min-height: 36px;
+                position: relative;
+                backdrop-filter: blur(10px);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
             }
+            
             .dropdown-item:hover {
                 background: var(--vscode-list-hoverBackground);
+                transform: translateY(-1px);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+                            0 2px 4px rgba(0, 0, 0, 0.05);
             }
-            .dropdown-item .delete-button {
+            
+            .dropdown-item:active {
+                transform: translateY(0);
+            }
+            
+            .dropdown-item .button-group {
                 margin-left: auto;
+                display: flex;
+                gap: 4px;
                 opacity: 0;
-                transition: opacity 0.2s ease;
-                color: var(--vscode-errorForeground);
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
-            .dropdown-item:hover .delete-button {
+            
+            .dropdown-item:hover .button-group {
                 opacity: 1;
             }
+            
+            .edit-button,
+            .delete-button {
+                padding: 2px 6px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            
+            .edit-button:hover {
+                background: rgba(255, 255, 255, 0.1);
+            }
+            
+            .delete-button:hover {
+                background: rgba(255, 0, 0, 0.1);
+            }
+            
             .add-button {
-                flex: 0 0 calc(50% - 8px);
+                grid-column: 1 / -1;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                padding: 6px 12px;
-                background: var(--vscode-button-secondaryBackground);
+                padding: 8px 14px;
+                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 70%, transparent);
                 color: var(--vscode-button-secondaryForeground);
-                border: 1px dashed var(--vscode-button-border);
-                margin: 4px;
-                border-radius: 4px;
-                min-height: 32px;
-                flex-shrink: 0;
+                border: 1px dashed color-mix(in srgb, var(--vscode-button-border) 50%, transparent);
+                margin: 4px 0;
+                border-radius: 6px;
+                min-height: 36px;
                 cursor: pointer;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                backdrop-filter: blur(10px);
             }
+            
             .add-button:hover {
                 background: var(--vscode-button-secondaryHoverBackground);
+                transform: translateY(-1px);
+                border-style: solid;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
             }
+            
+            .add-button:active {
+                transform: translateY(0);
+            }
+            
             .button-disabled {
-                opacity: 0.5;
+                opacity: 0.6;
                 cursor: not-allowed !important;
+                filter: saturate(0.8);
+            }
+            
+            /* 添加平滑滚动 */
+            * {
+                scroll-behavior: smooth;
+            }
+            
+            /* 自定义滚动条 */
+            ::-webkit-scrollbar {
+                width: 8px;
+                height: 8px;
+            }
+            
+            ::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            
+            ::-webkit-scrollbar-thumb {
+                background: var(--vscode-scrollbarSlider-background);
+                border-radius: 4px;
+            }
+            
+            ::-webkit-scrollbar-thumb:hover {
+                background: var(--vscode-scrollbarSlider-hoverBackground);
             }
         `;
 
@@ -364,7 +549,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             <div class="dropdown-item" data-command="${this.escapeHtml(cmd.command)}">
                 <span class="button-icon">📎</span>
                 <span>${this.escapeHtml(cmd.name)}</span>
-                <span class="delete-button" data-index="${index}">🗑️</span>
+                <div class="button-group">
+                    <span class="edit-button" data-index="${index}" title="编辑">✏️</span>
+                    <span class="delete-button" data-index="${index}" title="删除">🗑️</span>
+                </div>
             </div>
         `).join('');
 
@@ -372,7 +560,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             <div class="dropdown-item" data-command="${this.escapeHtml(cmd.command)}">
                 <span class="button-icon">📎</span>
                 <span>${this.escapeHtml(cmd.name)}</span>
-                <span class="delete-button" data-index="${index}">🗑️</span>
+                <div class="button-group">
+                    <span class="edit-button" data-index="${index}" title="编辑">✏️</span>
+                    <span class="delete-button" data-index="${index}" title="删除">🗑️</span>
+                </div>
             </div>
         `).join('');
 
@@ -505,7 +696,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             // 绑定命令点击事件
                             container.querySelectorAll('.dropdown-item').forEach(item => {
                                 item.addEventListener('click', (e) => {
-                                    if (!e.target.classList.contains('delete-button')) {
+                                    if (!e.target.classList.contains('delete-button') && 
+                                        !e.target.classList.contains('edit-button')) {
                                         const command = item.dataset.command;
                                         console.log('Command clicked:', command);
                                         if (isEval) {
@@ -520,6 +712,20 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                             });
                                         }
                                     }
+                                });
+                            });
+
+                            // 绑定编辑按钮事件
+                            container.querySelectorAll('.edit-button').forEach(button => {
+                                button.addEventListener('click', (e) => {
+                                    e.stopPropagation();
+                                    const index = parseInt(button.dataset.index);
+                                    console.log('Edit button clicked:', index);
+                                    vscode.postMessage({ 
+                                        type: 'editCustomCommand',
+                                        index: index,
+                                        isEval: isEval
+                                    });
                                 });
                             });
 
@@ -606,6 +812,31 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     ...message
                                 };
                                 updateButtons();
+                            }
+                        });
+
+                        // 监听状态更新
+                        window.addEventListener('message', event => {
+                            const message = event.data;
+                            switch (message.type) {
+                                case 'updateCommands':
+                                    // 更新命令列表
+                                    const container = message.isEval ? 
+                                        document.querySelector('#customEvalsList .dropdown-items-container') :
+                                        document.querySelector('#customCommandsList .dropdown-items-container');
+                                    
+                                    if (container) {
+                                        // 保留添加按钮
+                                        const addButton = container.querySelector('.add-button');
+                                        // 更新命令列表HTML
+                                        container.innerHTML = message.html;
+                                        // 重新添加添加按钮
+                                        container.appendChild(addButton);
+                                        // 重新绑定事件
+                                        bindCustomCommandEvents(container, message.isEval);
+                                    }
+                                    break;
+                                // ... existing cases ...
                             }
                         });
                     })();

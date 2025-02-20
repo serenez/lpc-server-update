@@ -243,6 +243,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
 
             /* 按钮容器 */
@@ -251,210 +252,394 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 top: 0;
                 display: flex;
                 align-items: center;
-                gap: 6px;
+                gap: 8px;
                 z-index: 1000;
-                background: var(--vscode-editor-background);
-                padding: 6px 8px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
+                padding: 8px 12px;
+                padding-right: 92px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+                backdrop-filter: blur(20px);
                 order: -1;
-                min-height: 32px;
+                min-height: 36px;
                 flex-wrap: nowrap;
+                border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 50%, transparent);
+                width: 100%;
+                box-sizing: border-box;
             }
 
             /* 消息容器 */
             #message-container {
                 flex: 1;
                 overflow-y: auto;
-                padding: 8px;
-                margin-top: 4px;
+                padding: 10px;
+                margin-top: 0;
                 display: flex;
                 flex-direction: column;
+                gap: 4px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                padding-bottom: 10px;
+                position: relative;
+            }
+
+            /* 悬浮按钮容器 */
+            .floating-buttons {
+                position: fixed;
+                top: 14px;
+                right: 14px;
+                display: flex;
                 gap: 6px;
+                z-index: 1001;
             }
 
-            /* 消息样式 */
+            /* 消息样式基础 */
             .message {
-                margin: 0;
-                padding: 8px 10px;
-                border-radius: 6px;
-                word-break: break-all;
-                line-height: 1.5;
-                transition: all 0.2s ease;
-                border: 1px solid transparent;
-                background: var(--vscode-editor-background);
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                position: relative;
+                padding: 8px 12px;
+                border-radius: 8px;
+                max-width: 85%;
+                font-size: 12px;
+                line-height: 1.4;
+                word-break: break-word;
+                margin: 2px 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+                backdrop-filter: blur(10px);
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                letter-spacing: 0.3px;
             }
 
-            .message-header {
+            /* 服务器消息靠左 */
+            .message.server-message {
+                align-self: flex-start;
+                margin-right: auto;
+                border-left: 3px solid rgba(28, 126, 214, 0.95);
+                border-bottom-left-radius: 4px;
+                background: rgba(28, 126, 214, 0.1);
+                animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.05);
+            }
+
+            /* 插件消息靠右 */
+            .message.plugin-message {
+                align-self: flex-end;
+                margin-left: auto;
+                border-right: 3px solid rgba(236, 72, 153, 0.95);
+                border-bottom-right-radius: 4px;
+                background: rgba(236, 72, 153, 0.2);
+                animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: inset -1px 1px 0 rgba(255, 255, 255, 0.1);
+            }
+
+            /* 错误消息样式 */
+            .message.error {
+                border-right: 2px solid #ff453a;
+                background: color-mix(in srgb, var(--vscode-editor-background) 65%, #ff453a);
+            }
+
+            .error-details {
+                background: rgba(255, 69, 58, 0.1);
+                border-radius: 6px;
+                padding: 6px 10px;
+                margin-top: 4px;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            }
+
+            .error-title {
+                color: #ff453a;
+                font-weight: 500;
+                font-size: 11px;
+                margin-bottom: 6px;
                 display: flex;
                 align-items: center;
                 gap: 6px;
-                margin-bottom: 4px;
-                opacity: 0.8;
-            }
-
-            .message:hover .message-header {
-                opacity: 1;
-            }
-
-            .timestamp {
-                color: var(--vscode-descriptionForeground);
-                font-size: 10px;
-                font-family: var(--vscode-editor-font-family);
-                padding: 1px 4px;
-                border-radius: 2px;
-                background: var(--vscode-editor-lineHighlightBackground);
-                white-space: nowrap;
-            }
-
-            .message-content {
-                font-size: 14px;
-                line-height: 1.5;
-                padding-left: 2px;
-                color: var(--vscode-editor-foreground) !important;
-            }
-
-            /* 消息类型样式 */
-            .success { 
-                border-left: 3px solid #4dc352;
-                background: rgba(46, 160, 67, 0.08);
-            }
-
-            .error { 
-                border-left: 3px solid #ff5a52;
-                background: rgba(255, 90, 82, 0.08);
-            }
-
-            .warning { 
-                border-left: 3px solid #e8a317;
-                background: rgba(232, 163, 23, 0.08);
-            }
-
-            .info { 
-                border-left: 3px solid #69b5ff;
-                background: rgba(105, 181, 255, 0.08);
-            }
-
-            .system { 
-                border-left: 3px solid #c89fff;
-                background: rgba(200, 159, 255, 0.08);
-            }
-
-            .eval-message {
-                border-left: 3px solid #ff9100;
-                background: rgba(255, 145, 0, 0.08);
-            }
-
-            /* 悬停效果 */
-            .message:hover {
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                transform: translateX(2px);
-            }
-
-            /* 错误链接样式 */
-            .error-link {
-                font-size: 14px;
-                color: var(--vscode-editor-foreground) !important;
+                letter-spacing: 0.2px;
+                text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
             }
 
             .error-file {
-                color: var(--vscode-textLink-foreground) !important;
-                font-weight: 500;
-                display: block;
-                margin: 2px 0;
+                color: var(--vscode-textLink-foreground);
+                margin: 4px 0;
+                padding: 3px 6px;
+                background: rgba(96, 165, 250, 0.1);
+                border-radius: 4px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 11px;
+                letter-spacing: 0.2px;
             }
 
             .error-line {
-                color: var(--vscode-errorForeground) !important;
+                color: #ff453a;
+                margin: 4px 0;
                 font-weight: 500;
-                display: block;
-                margin: 2px 0;
+                font-size: 11px;
+                letter-spacing: 0.2px;
+                text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
             }
 
             .error-message {
+                margin: 4px 0;
+                padding: 3px 6px;
+                background: rgba(255, 69, 58, 0.1);
+                border-radius: 4px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 11px;
+                letter-spacing: 0.2px;
+                line-height: 1.4;
+            }
+
+            /* 消息类型样式 - 插件消息 */
+            .message.plugin-message.success { 
+                border-right: 3px solid rgba(34, 211, 238, 0.95);
+                background: rgba(34, 211, 238, 0.2);
+            }
+
+            .message.plugin-message.warning { 
+                border-right: 3px solid rgba(251, 146, 60, 0.95);
+                background: rgba(251, 146, 60, 0.2);
+            }
+
+            .message.plugin-message.info { 
+                border-right: 3px solid rgba(236, 72, 153, 0.95);
+                background: rgba(236, 72, 153, 0.2);
+            }
+
+            .message.plugin-message.system { 
+                border-right: 3px solid rgba(167, 139, 250, 0.95);
+                background: rgba(167, 139, 250, 0.2);
+            }
+
+            .message.plugin-message.eval-message {
+                border-right: 3px solid rgba(234, 179, 8, 0.95);
+                background: rgba(234, 179, 8, 0.2);
+            }
+
+            .message.plugin-message.error {
+                border-right: 3px solid rgba(239, 68, 68, 0.95);
+                background: rgba(239, 68, 68, 0.2);
+            }
+
+            /* 服务器消息类型样式 */
+            .message.server-message.success {
+                border-left: 3px solid rgba(34, 197, 94, 0.95);
+                background: rgba(34, 197, 94, 0.1);
+            }
+
+            .message.server-message.warning {
+                border-left: 3px solid rgba(245, 158, 11, 0.95);
+                background: rgba(245, 158, 11, 0.1);
+            }
+
+            .message.server-message.info {
+                border-left: 3px solid rgba(28, 126, 214, 0.95);
+                background: rgba(28, 126, 214, 0.1);
+            }
+
+            .message.server-message.system {
+                border-left: 3px solid rgba(147, 51, 234, 0.95);
+                background: rgba(147, 51, 234, 0.1);
+            }
+
+            .message.server-message.eval-message {
+                border-left: 3px solid rgba(249, 115, 22, 0.95);
+                background: rgba(249, 115, 22, 0.1);
+            }
+
+            .message.server-message.error {
+                border-left: 3px solid rgba(220, 38, 38, 0.95);
+                background: rgba(220, 38, 38, 0.1);
+            }
+
+            /* 时间戳样式 */
+            .timestamp {
+                color: var(--vscode-descriptionForeground);
+                font-family: var(--vscode-editor-font-family);
+                padding: 2px 6px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 3px;
+                white-space: nowrap;
+                font-size: 10px;
+                letter-spacing: 0.3px;
+                opacity: 0.8;
+                margin-bottom: 4px;
+                display: inline-block;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+            }
+
+            /* 消息内容基础样式 */
+            .message-content {
+                line-height: 1.4;
                 color: var(--vscode-editor-foreground) !important;
-                font-weight: 500;
-                display: block;
+                font-weight: 400;
+                letter-spacing: 0.2px;
+                font-size: 12px;
+            }
+
+            /* 操作提示消息样式 */
+            .message-content .operation {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 4px 8px;
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.05);
                 margin: 2px 0;
+                font-weight: 500;
+                letter-spacing: 0.3px;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+            }
+
+            .operation.compile { color: #60a5fa; }     /* 编译操作 - 蓝色 */
+            .operation.connect { color: #34d399; }     /* 连接操作 - 绿色 */
+            .operation.disconnect { color: #f87171; }  /* 断开操作 - 红色 */
+            .operation.login { color: #818cf8; }       /* 登录操作 - 紫色 */
+            .operation.config { color: #fbbf24; }      /* 配置操作 - 黄色 */
+            .operation.eval { color: #f472b6; }        /* Eval操作 - 粉色 */
+
+            /* 代码块样式优化 */
+            .message .message-content .code-block {
+                background: rgba(30, 30, 30, 0.6);
+                border-radius: 8px;
+                padding: 8px 10px;
+                margin: 6px 0;
+                font-family: 'Fira Code', Consolas, 'Courier New', monospace;
+                font-size: 12px;
+                line-height: 1.2 !important;
+                overflow-x: auto;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                letter-spacing: 0.2px !important;
+                white-space: pre;
+            }
+
+            .message .message-content .code-block code {
+                white-space: pre;
+                font-family: inherit;
+                color: #e5e7eb;
+                text-shadow: none;
+                line-height: 1.2 !important;
+            }
+
+            /* 代码高亮优化 */
+            .message .message-content .code-block .string { color: #fca5a5 !important; }    /* 字符串 - 浅红色 */
+            .message .message-content .code-block .number { color: #93c5fd !important; }    /* 数字 - 浅蓝色 */
+            .message .message-content .code-block .boolean { color: #93c5fd !important; }   /* 布尔值 - 浅蓝色 */
+            .message .message-content .code-block .null { color: #93c5fd !important; }      /* null - 浅蓝色 */
+            .message .message-content .code-block .key { color: #c4b5fd !important; }       /* 键名 - 紫色 */
+            .message .message-content .code-block .punctuation { color: #9ca3af !important; } /* 标点符号 - 灰色 */
+
+            /* 代码块行样式 */
+            .message .message-content .code-block .line {
+                display: block;
+                min-height: 1.2em !important;
+                padding: 0 2px;
+                margin: 0 -2px;
+                border-radius: 3px;
+                line-height: 1.2 !important;
+            }
+
+            .message .message-content .code-block .line:hover {
+                background: rgba(255, 255, 255, 0.05);
+            }
+
+            /* 代码块滚动条 */
+            .message .message-content .code-block::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+
+            .message .message-content .code-block::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            .message .message-content .code-block::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 3px;
+            }
+
+            .message .message-content .code-block::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.3);
             }
 
             /* 配置按钮 */
             .config-button {
-                height: 22px;
-                padding: 0 8px;
+                height: 26px;
+                padding: 0 12px;
                 font-size: 11px;
-                border-radius: 3px;
-                border: 1px solid var(--vscode-button-border);
-                background: var(--vscode-button-secondaryBackground);
+                border-radius: 6px;
+                border: 1px solid color-mix(in srgb, var(--vscode-button-border) 30%, transparent);
+                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 95%, transparent);
                 color: var(--vscode-button-secondaryForeground);
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 4px;
-                transition: all 0.2s ease;
+                gap: 6px;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 min-width: 0;
                 flex: 1;
-                opacity: 0.8;
+                backdrop-filter: blur(10px);
+                font-weight: 450;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+                letter-spacing: 0.3px;
             }
 
             .config-button:hover {
-                opacity: 1;
-                background: var(--vscode-button-secondaryHoverBackground);
+                background: color-mix(in srgb, var(--vscode-button-secondaryHoverBackground) 95%, transparent);
                 transform: translateY(-1px);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+                            0 4px 8px rgba(0, 0, 0, 0.1);
             }
 
-            /* UTF8编码按钮 */
-            .config-button.utf8 {
-                background: rgba(33, 150, 243, 0.1);
-                color: #2196F3;
-                border: 1px solid rgba(33, 150, 243, 0.2);
-            }
-            .config-button.utf8:hover {
-                background: rgba(33, 150, 243, 0.15);
+            .config-button:active {
+                transform: translateY(0);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
             }
 
-            /* GBK编码按钮 */
-            .config-button.gbk {
-                background: rgba(156, 39, 176, 0.1);
-                color: #9C27B0;
-                border: 1px solid rgba(156, 39, 176, 0.2);
-            }
-            .config-button.gbk:hover {
-                background: rgba(156, 39, 176, 0.15);
-            }
-
-            /* 登录KEY按钮 */
             .config-button.settings {
-                background: rgba(3, 169, 244, 0.1);
-                color: #03A9F4;
-                border: 1px solid rgba(3, 169, 244, 0.2);
+                background: color-mix(in srgb, #007AFF 95%, transparent);
+                color: #ffffff;
             }
+
             .config-button.settings:hover {
-                background: rgba(3, 169, 244, 0.15);
+                background: color-mix(in srgb, #0A84FF 95%, transparent);
             }
 
-            /* 带邮箱按钮 */
+            .config-button.utf8 {
+                background: color-mix(in srgb, #34C759 95%, transparent);
+                color: #ffffff;
+            }
+
+            .config-button.utf8:hover {
+                background: color-mix(in srgb, #30D158 95%, transparent);
+            }
+
+            .config-button.gbk {
+                background: color-mix(in srgb, #FF9500 95%, transparent);
+                color: #ffffff;
+            }
+
+            .config-button.gbk:hover {
+                background: color-mix(in srgb, #FFB340 95%, transparent);
+            }
+
             .config-button.with-email {
-                background: rgba(76, 175, 80, 0.1);
-                color: #4CAF50;
-                border: 1px solid rgba(76, 175, 80, 0.2);
-            }
-            .config-button.with-email:hover {
-                background: rgba(76, 175, 80, 0.15);
+                background: color-mix(in srgb, #5856D6 95%, transparent);
+                color: #ffffff;
             }
 
-            /* 不带邮箱按钮 */
-            .config-button.without-email {
-                background: rgba(255, 152, 0, 0.1);
-                color: #FF9800;
-                border: 1px solid rgba(255, 152, 0, 0.2);
+            .config-button.with-email:hover {
+                background: color-mix(in srgb, #6C6ADA 95%, transparent);
             }
+
+            .config-button.without-email {
+                background: color-mix(in srgb, #AF52DE 95%, transparent);
+                color: #ffffff;
+            }
+
             .config-button.without-email:hover {
-                background: rgba(255, 152, 0, 0.15);
+                background: color-mix(in srgb, #BF5AF2 95%, transparent);
             }
 
             /* 图标按钮 */
@@ -466,21 +651,26 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                border: 1px solid var(--vscode-button-border);
-                border-radius: 3px;
-                background: transparent;
+                border: 1px solid color-mix(in srgb, var(--vscode-button-border) 30%, transparent);
+                border-radius: 6px;
+                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 95%, transparent);
                 color: var(--vscode-foreground);
                 cursor: pointer;
-                transition: all 0.2s ease;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 flex-shrink: 0;
-                font-size: 12px;
-                opacity: 0.8;
+                font-size: 13px;
+                backdrop-filter: blur(10px);
             }
 
             .icon-button:hover {
-                opacity: 1;
-                background: var(--vscode-button-secondaryBackground);
+                background: color-mix(in srgb, var(--vscode-button-secondaryHoverBackground) 95%, transparent);
                 transform: translateY(-1px);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            .icon-button:active {
+                transform: translateY(0);
+                box-shadow: none;
             }
 
             .icon-button.delete {
@@ -488,7 +678,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
 
             .icon-button.delete:hover {
-                background: rgba(255, 77, 79, 0.1);
+                background: color-mix(in srgb, var(--vscode-errorForeground) 10%, var(--vscode-button-secondaryBackground));
             }
 
             .icon-button.lock {
@@ -496,19 +686,14 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
 
             .icon-button.lock.active {
-                color: #2196F3;
-                background: rgba(33, 150, 243, 0.1);
-                opacity: 1;
-            }
-
-            .icon-button.lock:hover {
-                opacity: 1;
-                background: var(--vscode-button-secondaryBackground);
+                color: #60a5fa;
+                background: color-mix(in srgb, #60a5fa 10%, var(--vscode-button-secondaryBackground));
             }
 
             /* 滚动条样式 */
             #message-container::-webkit-scrollbar {
-                width: 6px;
+                width: 8px;
+                height: 8px;
             }
 
             #message-container::-webkit-scrollbar-track {
@@ -516,83 +701,21 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
 
             #message-container::-webkit-scrollbar-thumb {
-                background: var(--vscode-scrollbarSlider-background);
-                border-radius: 3px;
+                background: color-mix(in srgb, var(--vscode-scrollbarSlider-background) 80%, transparent);
+                border-radius: 4px;
+                border: 2px solid transparent;
+                background-clip: padding-box;
             }
 
             #message-container::-webkit-scrollbar-thumb:hover {
-                background: var(--vscode-scrollbarSlider-hoverBackground);
+                background: color-mix(in srgb, var(--vscode-scrollbarSlider-hoverBackground) 80%, transparent);
+                border: 1.5px solid transparent;
             }
 
-            /* 错误消息样式 */
-            .error-details {
-                background: var(--vscode-editor-inactiveSelectionBackground);
-                border-radius: 4px;
-                padding: 8px;
-                margin-top: 4px;
+            /* 平滑滚动 */
+            * {
+                scroll-behavior: smooth;
             }
-
-            .error-title {
-                font-size: 14px;
-                font-weight: 600;
-                color: var(--vscode-errorForeground);
-                margin-bottom: 6px;
-            }
-
-            .error-file {
-                color: var(--vscode-textLink-foreground);
-                font-weight: 500;
-                padding: 4px 0;
-            }
-
-            .error-line {
-                color: var(--vscode-errorForeground);
-                font-weight: 500;
-                padding: 4px 0;
-            }
-
-            .error-message {
-                color: var(--vscode-editor-foreground);
-                font-weight: 500;
-                padding: 4px 0;
-            }
-
-            .error-details:hover {
-                background: var(--vscode-editor-selectionBackground);
-            }
-
-            .error-link {
-                cursor: pointer;
-                padding: 2px;
-                border-radius: 4px;
-            }
-
-            .error-link:hover .error-details {
-                background: var(--vscode-editor-selectionBackground);
-            }
-
-            @font-face {
-                font-family: "codicon";
-                src: url(${webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode/codicons', 'dist', 'codicon.ttf'))});
-            }
-
-            .codicon {
-                font: normal normal normal 16px/1 codicon;
-                display: inline-block;
-                text-decoration: none;
-                text-rendering: auto;
-                text-align: center;
-                -webkit-font-smoothing: antialiased;
-                -moz-osx-font-smoothing: grayscale;
-                user-select: none;
-                -webkit-user-select: none;
-                -ms-user-select: none;
-                margin-right: 4px;
-            }
-
-            .codicon-file:before { content: "\\ea7b"; }
-            .codicon-location:before { content: "\\ea59"; }
-            .codicon-warning:before { content: "\\ea6c"; }
         `;
 
         return `<!DOCTYPE html>
@@ -618,6 +741,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <button class="config-button ${loginWithEmail ? 'with-email' : 'without-email'}" id="loginEmailButton" title="登录邮箱状态">
                         登录:${loginWithEmail ? '含邮箱' : '不含'}
                     </button>
+                </div>
+                <div class="floating-buttons">
                     <button class="icon-button lock active" id="scrollLockButton" title="自动滚动已开启">
                         🔒
                     </button>
@@ -765,35 +890,305 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             </html>`;
     }
 
-    private formatTSValue(value: any): string {
-        if (typeof value === 'string') {
-            return `"${value}"`;
+    private indent(text: string): string {
+        return text.split('\n').map(line => `  ${line}`).join('\n');  // 使用2个空格缩进
+    }
+
+    private splitArrayElements(content: string): string[] {
+        const elements: string[] = [];
+        let current = '';
+        let depth = 0;
+        let inString = false;
+        
+        for (let i = 0; i < content.length; i++) {
+            const char = content[i];
+            
+            if (char === '"' && content[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            
+            if (!inString) {
+                if (char === '(' || char === '[' || char === '{') {
+                    depth++;
+                } else if (char === ')' || char === ']' || char === '}') {
+                    depth--;
+                }
+            }
+            
+            if (char === ',' && depth === 0 && !inString) {
+                elements.push(current.trim());
+                current = '';
+                continue;
+            }
+            
+            current += char;
         }
-        if (typeof value === 'number' || typeof value === 'boolean') {
-            return value.toString();
+        
+        if (current.trim()) {
+            elements.push(current.trim());
+        }
+        
+        return elements;
+    }
+
+    private splitPairs(content: string): string[] {
+        const pairs: string[] = [];
+        let current = '';
+        let depth = 0;
+        let inString = false;
+        
+        for (let i = 0; i < content.length; i++) {
+            const char = content[i];
+            
+            if (char === '"' && content[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            
+            if (!inString) {
+                if (char === '(' || char === '[' || char === '{') {
+                    depth++;
+                } else if (char === ')' || char === ']' || char === '}') {
+                    depth--;
+                }
+            }
+            
+            if (char === ',' && depth === 0 && !inString) {
+                pairs.push(current.trim());
+                current = '';
+                continue;
+            }
+            
+            current += char;
+        }
+        
+        if (current.trim()) {
+            pairs.push(current.trim());
+        }
+        
+        return pairs;
+    }
+
+    private splitKeyValue(pair: string): [string | null, string | null] {
+        const colonIndex = pair.indexOf(':');
+        if (colonIndex === -1) {
+            return [null, null];
+        }
+        
+        const key = pair.substring(0, colonIndex).trim();
+        const value = pair.substring(colonIndex + 1).trim();
+        
+        return [key, value];
+    }
+
+    private parseBasicValue(value: string): any {
+        value = value.trim();
+        
+        // 移除注释
+        value = value.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        
+        // 数字
+        if (/^-?\d+$/.test(value)) {
+            return parseInt(value);
+        }
+        
+        // 浮点数
+        if (/^-?\d*\.\d+$/.test(value)) {
+            return parseFloat(value);
+        }
+        
+        // 字符串
+        if (value.startsWith('"') && value.endsWith('"')) {
+            return value.slice(1, -1);
+        }
+        
+        // 布尔值
+        if (value === '1') return true;
+        if (value === '0') return false;
+        
+        return value;
+    }
+
+    private parseLPCMapping(content: string): any {
+        if (!content.trim()) {
+            return content;
+        }
+
+        try {
+            // 清理输入字符串
+            content = content.replace(/^"+|"+$/g, ''); // 移除外层引号
+            content = content.replace(/\\r/g, ''); // 移除 \r
+            content = content.replace(/\\\"/g, '"'); // 处理转义的引号
+
+            // 处理LPC数组格式 ({ item1, item2 })
+            if (content.trim().startsWith('({') && content.trim().endsWith('})')) {
+                // 提取数组内容
+                let arrayContent = content.substring(content.indexOf('({') + 2, content.lastIndexOf('})'));
+                
+                // 移除注释
+                arrayContent = arrayContent.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                
+                // 如果是空数组
+                if (!arrayContent) {
+                    return '({})';
+                }
+                
+                // 分割数组元素
+                const elements = this.splitArrayElements(arrayContent);
+                
+                // 格式化每个元素
+                const formattedElements = elements.map(element => {
+                    element = element.trim();
+                    // 检查是否是对象引用格式 path#id ("name")
+                    const match = element.match(/([^#]+)#(\d+)\s*\("([^"]+)"\)/);
+                    if (match) {
+                        const [, path, id, name] = match;
+                        return {
+                            path: path.trim(),
+                            id: parseInt(id),
+                            name: name
+                        };
+                    }
+                    return element;
+                });
+
+                // 返回格式化后的结果
+                return formattedElements;
+            }
+
+            // 处理其他LPC映射格式
+            if (content.trim().startsWith('([') && content.trim().endsWith('])')) {
+                content = content.substring(content.indexOf('([') + 2, content.lastIndexOf('])'));
+                
+                content = content.replace(/\/\*[\s\S]*?\*\//g, '');
+                
+                const pairs = this.splitPairs(content);
+                
+                const result: any = {};
+                
+                pairs.forEach(pair => {
+                    pair = pair.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                    
+                    const [key, value] = this.splitKeyValue(pair);
+                    if (!key || !value) {
+                        return;
+                    }
+                    
+                    const cleanKey = key.replace(/"/g, '').trim();
+                    
+                    let cleanValue = value.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+                    
+                    if (cleanValue.startsWith('([') && cleanValue.endsWith('])')) {
+                        result[cleanKey] = this.parseLPCMapping(cleanValue);
+                    } else if (cleanValue.startsWith('({') && cleanValue.endsWith('})')) {
+                        result[cleanKey] = this.parseLPCArray(cleanValue);
+                    } else {
+                        result[cleanKey] = this.parseBasicValue(cleanValue);
+                    }
+                });
+                
+                return result;
+            }
+
+            return content;
+        } catch (error) {
+            console.error('解析LPC映射出错:', error);
+            return content;
+        }
+    }
+
+    private parseLPCArray(content: string): any[] {
+        if (!content.trim()) {
+            return [];
+        }
+
+        try {
+            // 提取数组内容
+            let arrayContent = content.substring(content.indexOf('({') + 2, content.lastIndexOf('})'));
+            
+            // 移除注释
+            arrayContent = arrayContent.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+            
+            // 如果是空数组
+            if (!arrayContent) {
+                return [];
+            }
+            
+            // 分割数组元素
+            const elements = this.splitArrayElements(arrayContent);
+            
+            // 格式化每个元素
+            return elements.map(element => {
+                element = element.trim();
+                // 检查是否是对象引用格式 path#id ("name")
+                const match = element.match(/([^#]+)#(\d+)\s*\("([^"]+)"\)/);
+                if (match) {
+                    const [, path, id, name] = match;
+                    return {
+                        path: path.trim(),
+                        id: parseInt(id),
+                        name: name
+                    };
+                }
+                return this.parseBasicValue(element);
+            });
+        } catch (error) {
+            console.error('解析LPC数组出错:', error);
+            return [];
+        }
+    }
+
+    private formatTSValue(value: any, indent: number = 0): string {
+        const indentStr = '  '.repeat(indent);
+        
+        if (typeof value === 'string') {
+            return `<span class="string">"${value}"</span>`;
+        }
+        if (typeof value === 'number') {
+            return `<span class="number">${value}</span>`;
+        }
+        if (typeof value === 'boolean') {
+            return `<span class="boolean">${value}</span>`;
         }
         if (value === null) {
-            return 'null';
+            return `<span class="null">null</span>`;
         }
         if (Array.isArray(value)) {
-            const items = value.map(item => this.formatTSValue(item)).join(',\n');
-            return `[\n${this.indent(items)}\n]`;
+            if (value.length === 0) return '<span class="punctuation">({})</span>';
+            
+            // 检查是否是对象引用数组
+            if (value[0] && typeof value[0] === 'object' && 'path' in value[0]) {
+                const items = value.map(item => 
+                    `${indentStr}  ${item.path}<span class="punctuation">#</span><span class="number">${item.id}</span> <span class="punctuation">(</span><span class="string">"${item.name}"</span><span class="punctuation">)</span>`
+                ).join('<span class="punctuation">,</span>\n');
+                return `<span class="punctuation">({</span>\n${items}\n${indentStr}<span class="punctuation">})</span>`;
+            }
+            
+            const items = value.map(item => 
+                `${indentStr}  ${this.formatTSValue(item, indent + 1)}`
+            ).join('<span class="punctuation">,</span>\n');
+            return `<span class="punctuation">[</span>\n${items}\n${indentStr}<span class="punctuation">]</span>`;
         }
         if (typeof value === 'object') {
-            const entries = Object.entries(value).map(([key, val]) => 
-                `"${key}": ${this.formatTSValue(val)}`
-            ).join(',\n');
-            return `{\n${this.indent(entries)}\n}`;
+            const entries = Object.entries(value);
+            if (entries.length === 0) return '<span class="punctuation">{}</span>';
+            
+            const formattedEntries = entries.map(([key, val]) => {
+                const formattedKey = `<span class="key">"${key}"</span>`;
+                return `${indentStr}  ${formattedKey}<span class="punctuation">:</span> ${this.formatTSValue(val, indent + 1)}`;
+            }).join('<span class="punctuation">,</span>\n');
+            
+            return `<span class="punctuation">{</span>\n${formattedEntries}\n${indentStr}<span class="punctuation">}</span>`;
         }
         return String(value);
     }
 
-    private indent(text: string): string {
-        return text.split('\n').map(line => `  ${line}`).join('\n');
-    }
-
     private wrapInCodeBlock(code: string, language: string = 'typescript'): string {
-        return `<pre class="code-block ${language}"><code>${this.escapeHtml(code)}</code></pre>`;
+        // 为每一行添加行号和格式化
+        const lines = code.split('\n').map((line, i) => 
+            `<span class="line">${line}</span>`
+        ).join('\n');
+        
+        return `<pre class="code-block ${language}"><code>${lines}</code></pre>`;
     }
 
     private escapeHtml(text: string): string {
@@ -807,13 +1202,12 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         return text.replace(/[&<>"']/g, m => map[m]);
     }
 
-    public addMessage(message: string) {
+    public addMessage(message: string, isServerMessage: boolean = false) {
         const config = vscode.workspace.getConfiguration('gameServerCompiler');
         const timeFormat = config.get<string>('messages.timeFormat', 'HH:mm:ss');
         const showIcons = config.get<boolean>('messages.showIcons', true);
         const maxCount = config.get<number>('messages.maxCount', 1000);
 
-        // 限制消息数量
         if (this._messages.length >= maxCount) {
             this._messages = this._messages.slice(-maxCount + 1);
         }
@@ -844,41 +1238,43 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 break;
         }
 
+        // 根据消息内容判断类型
         let type = 'info';
         let extraClass = '';
         let formattedMessage = message;
 
         // 检查消息类型
-        if (message.includes('❗ EVAL指令:')) {
-            type = 'eval';  // 新增 eval 类型
-            extraClass = ' eval-message';  // 添加特殊类名
-        } else if (message.includes('成功') || message.includes('完成')) {
+        if (message.startsWith('✅')) {
             type = 'success';
-        } else if (message.includes('错误') || message.includes('失败')) {
+        } else if (message.startsWith('❌')) {
             type = 'error';
-        } else if (message.includes('警告') || message.includes('注意')) {
+        } else if (message.startsWith('⚠️')) {
             type = 'warning';
-        } else if (message.includes('系统') || message.includes('初始化')) {
+        } else if (message.startsWith('🔧') || message.startsWith('🔌')) {
             type = 'system';
-        }
-
-        // 检查是否是临时消息(015协议)
-        if (message.includes('更新中') || message.includes('维护中')) {
-            extraClass = ' temp-message';
+        } else if (message.startsWith('🔍 Eval结果:')) {
+            type = 'eval-message';
         }
 
         // 检查是否包含JSON或TS对象
         if (message.includes('Eval结果:')) {
             try {
                 const jsonStart = message.indexOf('\n') + 1;
-                const jsonStr = message.substring(jsonStart);
-                const jsonObj = JSON.parse(jsonStr);
-                const formattedJson = this.formatTSValue(jsonObj);
-                formattedMessage = `${message.substring(0, jsonStart)}${this.wrapInCodeBlock(formattedJson)}`;
+                const jsonStr = message.substring(jsonStart).trim();
+                
+                // 使用parseLPCMapping解析LPC格式的数据
+                const parsedData = this.parseLPCMapping(jsonStr);
+                
+                // 使用formatTSValue格式化数据
+                const formattedJson = this.formatTSValue(parsedData);
+                
+                // 构建完整的消息HTML
+                formattedMessage = `<div class="operation eval">🔍 Eval结果:</div>\n<div class="code-block"><code>${formattedJson}</code></div>`;
                 extraClass += ' has-code';
             } catch (e) {
-                // 如果解析失败,保持原始消息
-                console.error('JSON解析失败:', e);
+                console.error('解析失败:', e);
+                // 如果解析失败,保持原始格式
+                formattedMessage = `<div class="operation eval">🔍 Eval结果:</div>\n<div class="code-block"><code>${this.escapeHtml(message.substring(message.indexOf('\n') + 1))}</code></div>`;
             }
         }
 
@@ -886,8 +1282,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const errorMatch = message.match(/❌ 编译错误:\s*文件:\s*([^\n]+)\s*行号:\s*(\d+)\s*错误:\s*(.*)/);
         if (errorMatch) {
             const [, filePath, line, errorMessage] = errorMatch;
-            // 修改编译错误消息模板
-            const messageHtml = `<div class="message error${extraClass}">
+            const messageHtml = `<div class="message ${isServerMessage ? 'server-message' : 'plugin-message'} error${extraClass}">
                 <div class="message-header">
                     <span class="timestamp">[${timestamp}]</span>
                 </div>
@@ -895,9 +1290,9 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <div class="error-link" data-file="${filePath}" data-line="${line}">
                         <div class="error-title">❌ 编译错误</div>
                         <div class="error-details">
-                            <div class="error-file">文件: ${filePath}</div>
-                            <div class="error-line">位置: 第 ${line} 行</div>
-                            <div class="error-message">错误: ${errorMessage}</div>
+                            <div class="error-file">📄 ${filePath}</div>
+                            <div class="error-line">📍 第 ${line} 行</div>
+                            <div class="error-message">⚠️ ${errorMessage}</div>
                         </div>
                     </div>
                 </div>
@@ -911,7 +1306,21 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 errorData: { filePath, line: parseInt(line), message: errorMessage }
             });
         } else {
-            const messageHtml = `<div class="message ${type}${extraClass}">
+            // 添加操作类型样式
+            if (message.includes('编译')) {
+                formattedMessage = `<div class="operation compile">🔨 ${formattedMessage}</div>`;
+            } else if (message.includes('连接成功')) {
+                formattedMessage = `<div class="operation connect">🔌 ${formattedMessage}</div>`;
+            } else if (message.includes('断开连接')) {
+                formattedMessage = `<div class="operation disconnect">🔌 ${formattedMessage}</div>`;
+            } else if (message.includes('登录')) {
+                formattedMessage = `<div class="operation login">👤 ${formattedMessage}</div>`;
+            } else if (message.includes('配置')) {
+                formattedMessage = `<div class="operation config">⚙️ ${formattedMessage}</div>`;
+            }
+
+            // 构建消息HTML,确保类型样式正确应用
+            const messageHtml = `<div class="message ${isServerMessage ? 'server-message' : 'plugin-message'} ${type}${extraClass}">
                 <div class="message-header">
                     <span class="timestamp">[${timestamp}]</span>
                 </div>

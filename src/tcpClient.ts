@@ -276,7 +276,6 @@ export class TcpClient implements IDisposable {
                 // 立即显示错误信息
                 const errorMsg = `❌ 编译错误:\n文件: ${filePath}\n行号: ${this.errorLine}\n错误: ${errorMessage}`;
                 this.messageProvider?.addMessage(errorMsg);
-                this.log(errorMsg, LogLevel.ERROR, false);
                 
                 // 在编辑器中显示错误
                 this.showCompileError(filePath, this.errorLine, errorMessage);
@@ -316,7 +315,8 @@ export class TcpClient implements IDisposable {
                         const formattedJson = JSON.stringify(jsonObj, null, 2);
                         
                         if (this.messageProvider) {
-                            this.messageProvider.addMessage(`🔍 Eval结果:\n${formattedJson}`);
+                          this.messageProvider.addMessage(`🔍 Eval结果:\n${formattedJson}`);
+                          this.log(`🔍 Eval结果:\n${formattedJson}`, LogLevel.DEBUG);
                         }
                     } catch (error) {
                         this.log(`解析MUY消息失败: ${error}`, LogLevel.ERROR);
@@ -370,11 +370,11 @@ export class TcpClient implements IDisposable {
                 this.login();
             } else if (cleanedMessage.includes('muy_update:')) {
                 const match = cleanedMessage.match(/muy_update:(.*)/);
-                    if (match) {
-                        const dependencyFile = match[1].trim();
+                if (match) {
+                    const dependencyFile = match[1].trim();
                     this.log(`检测到依赖文件更新: ${dependencyFile}`, LogLevel.INFO);
-                        this.sendUpdateCommand(dependencyFile);
-                    }
+                    this.sendUpdateCommand(dependencyFile);
+                }
             } else if (cleanedMessage.startsWith('ver')) {
                 this.log('收到服务器连接成功信号', LogLevel.INFO);
                 this.connected = true;
@@ -390,34 +390,10 @@ export class TcpClient implements IDisposable {
             } else if (cleanedMessage.trim()) {
                 this.appendToGameLog(cleanedMessage);
                 
-                let icon = '';
-                if (/^[.]+$/.test(cleanedMessage)) {
-                    icon = '⏳ ';
-                } else if (cleanedMessage.includes('【系统提示】')) {
-                    icon = '🔔 ';
-                } else if (cleanedMessage.includes('成功编译')) {
-                    icon = '✨ ';
-                } else if (cleanedMessage.includes('开始编译')) {
-                    icon = '🔄 ';
-                } else if (cleanedMessage.includes('整理了目录')) {
-                    icon = '📦 ';
-                } else if (cleanedMessage.includes('总共有') && cleanedMessage.includes('档案被成功编译')) {
-                    icon = '🎉 ';
-                } else if (cleanedMessage.includes('成功')) {
-                    icon = '✅ ';
-                } else if (cleanedMessage.includes('失败') || cleanedMessage.includes('错误')) {
-                    icon = '❌ ';
-                } else if (cleanedMessage.includes('警告') || cleanedMessage.includes('注意')) {
-                    icon = '⚠️ ';
-                } else if (cleanedMessage.includes('系统消息:')) {
-                    icon = '🔧 ';
-                } else if (cleanedMessage.includes('断开连接')) {
-                    icon = '🔌 ';
-                }
-                
-                const formattedMessage = `${icon}${cleanedMessage}`;
+                // 将服务器消息传递给消息提供者，标记为服务器消息
                 if (this.messageProvider) {
-                    this.messageProvider.addMessage(formattedMessage);
+                    // 所有从socket接收的消息都是服务器消息
+                    this.messageProvider.addMessage(cleanedMessage, true);
                 }
             }
         } catch (error) {
@@ -567,7 +543,10 @@ export class TcpClient implements IDisposable {
             }
 
             if (shouldShow && content) {
-                this.outputChannel.appendLine(`${icon}${content}`);
+                if (this.messageProvider) {
+                    // 插件生成的提示消息应该标记为非服务器消息(isServerMessage=false)
+                    this.messageProvider.addMessage(`${icon}${content}`, false);
+                }
             }
 
             if (showNotification) {

@@ -2,14 +2,17 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.1.3-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](http://wpa.qq.com/msgrd?v=3&uin=279631638&site=qq&menu=yes)
 
 一个专业的 VS Code 扩展，为 LPC 游戏开发者提供完整的服务器连接和管理解决方案。
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
 </div>
+
+---
 
 推荐LPC语法检查，语法高亮，函数提示等功能插件：[LPC language-server](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)
 
@@ -21,30 +24,33 @@
 
 搭配此插件可实现更好的编码体验。
 
+---
+
 ## ⚠️ 使用前注意
 
 ### 🌐 使用环境选择
 
 #### 1️⃣ 与游戏服务器在同一台设备 推荐！⭐️⭐️⭐️⭐️⭐️
-```properties
-IP地址设置: localhost 或 127.0.0.1
+<pre>
+<code class="properties">IP地址设置: localhost 或 127.0.0.1
 适用场景: 直接在游戏服务器上开发
-优势: 最佳性能和稳定性
-```
+优势: 最佳性能和稳定性</code>
+</pre>
 
 #### 2️⃣ 与游戏服务器不在同一台设备，但是利用vscode远程SSH连接游戏服务器 推荐⭐️⭐️⭐️⭐️⭐️！ 
-```properties
-工具: VS Code Remote-SSH
+<pre>
+<code class="properties">工具: VS Code Remote-SSH
 IP设置: localhost 或 127.0.0.1
 适用场景: 远程开发但需要本地编辑器体验.
 
 RemoteSSH 免密登录WindowsServer服务器使用教程：
-  待更新 如需要可咨询作者 QQ 279631638
-```
+  待更新 如需要可咨询作者 QQ 279631638</code>
+</pre>
 
 #### 3️⃣ 本地开发环境，与游戏服务器不在同一台设备
 > ⚡ **重要**: 必须确保本地与服务器项目文件保持同步！
 此方法依赖同步速度，太慢的同步速度会因为本地文件修改但是未上传至服务器，导致编译的还是旧文件。
+
 推荐的同步方案：
 - 🔄 **[SFTP](https://marketplace.visualstudio.com/items?itemName=liximomo.sftp)** (推荐)
   - VS Code插件
@@ -63,6 +69,8 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 > 
 > 否则，即使执行UPDATE命令也无法正确编译文件。
 
+---
+
 ## 🚀 快速开始
 
 ### 1️⃣ 安装
@@ -73,8 +81,8 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ### 2️⃣ 配置
 在 `.vscode/muy-lpc-update.json` 中配置：
 
-```json
-{
+<pre>
+<code class="json">{
     "host": "服务器地址",
     "port": 端口号,
     "username": "巫师账号",
@@ -87,13 +95,15 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
         "defaultDir": "",
         "timeout": 30000
     }
-}
-```
+}</code>
+</pre>
 
 ### 3️⃣ 开始使用
 1. 点击左侧活动栏的 LPC 图标
 2. 点击 "连接游戏服务器"
 3. 开始编码！
+
+---
 
 ## 🛠️ 功能特性
 
@@ -121,6 +131,8 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 支持消息清理
 - 自定义消息样式
 
+---
+
 ## 🔒 安全注意事项
 
 - 🚫 禁止在公共场合分享配置文件
@@ -128,10 +140,12 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 🔑 定期更改密码和验证密钥
 - 🛡️ 确保服务器端口的安全性
 
+---
+
 ## ❓ 常见问题
 
 <details>
-<summary>连接失败</summary>
+<summary><b>🔌 连接失败</b></summary>
 
 1. 检查服务器地址和端口
 2. 确认网络连接
@@ -139,7 +153,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 </details>
 
 <details>
-<summary>编译错误</summary>
+<summary><b>⚠️ 编译错误</b></summary>
 
 1. 检查文件路径
 2. 查看错误信息
@@ -147,18 +161,22 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 </details>
 
 <details>
-<summary>中文乱码</summary>
+<summary><b>📝 中文乱码</b></summary>
 
 1. 检查编码设置
 2. 切换到 GBK 编码
 3. 重新连接服务器
 </details>
 
+---
+
 ## 📞 联系方式
 
 - 📧 Email: 279631638@qq.com
 - 💬 QQ: 279631638
 - 🐛 Issues: [GitHub Issues](https://github.com/serenez/lpc-server-update/issues)
+
+---
 
 ## 📄 许可证
 
@@ -167,5 +185,11 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ---
 
 <div align="center">
-如果这个插件对你有帮助，欢迎给个 ⭐️！
+
+### 如果这个插件对你有帮助，欢迎给个 ⭐️！
+
+<a href="https://github.com/serenez/lpc-server-update">
+  <img src="https://img.shields.io/github/stars/serenez/lpc-server-update?style=social" alt="GitHub stars">
+</a>
+
 </div>

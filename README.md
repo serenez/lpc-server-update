@@ -11,10 +11,14 @@
 
 </div>
 
-推荐LPC语法检查，语法高亮，函数提示等功能插件：[LPC](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)
-此插件配置文件为：'项目根目录/lpc-config.json'
+推荐LPC语法检查，语法高亮，函数提示等功能插件：[LPC language-server](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)
+
+此插件配置文件为：'项目根目录/lpc-config.json'(该插件极度依赖配置文件，得以获取更好的体验)
+
 如该插件配置文件不会配置可咨询我。 QQ 279631638
+
 该插件已经实现 代码补全、诊断、悬停提示、代码导航、跳转、预览、定义、代码大纲、代码导航、构建任务等功能。且我已贡献该插件中文化实现，可直接使用。
+
 搭配此插件可实现更好的编码体验。
 
 ## ⚠️ 使用前注意

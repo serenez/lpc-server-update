@@ -532,6 +532,7 @@ export function deactivate() {
             tcpClient.disconnect();
         }
         messageProvider?.dispose();
+        configManager?.dispose();
         console.log('插件停用完成');
     } catch (error) {
         console.error('插件停用错误:', error);

@@ -251,7 +251,8 @@ export class TcpClient implements IDisposable {
                 return;
             }
 
-            // 检查是否是编译错误
+          // 检查是否是编译错误 显示所有信息
+          //this.log(message, LogLevel.DEBUG);
             const errorMatch = message.match(/编译时段错误：([^:]+\.c)\s+line\s+(\d+):\s*(.*)/);
             if (errorMatch) {
                 const [, filePath, lineNum, errorMessage] = errorMatch;

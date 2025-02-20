@@ -121,25 +121,10 @@
             }
           }
         },
-        "gameServerCompiler.compile.defaultDir": {
-          "type": "string",
-          "default": "",
-          "description": "默认编译目录"
-        },
         "gameServerCompiler.compile.autoCompileOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "保存文件时是否自动编译"
-        },
-        "gameServerCompiler.compile.timeout": {
-          "type": "number",
-          "default": 30000,
-          "description": "编译超时时间(毫秒)"
-        },
-        "gameServerCompiler.compile.showDetails": {
-          "type": "boolean",
-          "default": true,
-          "description": "是否显示编译详细信息"
+          "description": "保存文件时自动编译"
         },
         "gameServerCompiler.connection.maxRetries": {
           "type": "number",
@@ -155,11 +140,6 @@
           "type": "number",
           "default": 10000,
           "description": "连接超时时间(毫秒)"
-        },
-        "gameServerCompiler.connection.heartbeatInterval": {
-          "type": "number",
-          "default": 30000,
-          "description": "心跳包间隔时间(毫秒)"
         },
         "gameServerCompiler.ui.messagesPanelSize": {
           "type": "number",
@@ -179,16 +159,6 @@
           "type": "boolean",
           "default": true,
           "description": "是否显示操作按钮"
-        },
-        "gameServerCompiler.isConnected": {
-          "type": "boolean",
-          "default": false,
-          "description": "服务器连接状态"
-        },
-        "gameServerCompiler.isLoggedIn": {
-          "type": "boolean",
-          "default": false,
-          "description": "角色登录状态"
         }
       }
     },

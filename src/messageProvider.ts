@@ -1281,7 +1281,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         // 检查是否是编译错误消息
         const errorMatch = message.match(/❌ 编译错误:\s*文件:\s*([^\n]+)\s*行号:\s*(\d+)\s*错误:\s*(.*)/);
         if (errorMatch) {
-            const [, filePath, line, errorMessage] = errorMatch;
+          const [, filePath, line, errorMessage] = errorMatch;
+          
             const messageHtml = `<div class="message ${isServerMessage ? 'server-message' : 'plugin-message'} error${extraClass}">
                 <div class="message-header">
                     <span class="timestamp">[${timestamp}]</span>

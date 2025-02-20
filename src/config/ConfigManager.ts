@@ -34,6 +34,7 @@ export class ConfigManager {
     private configPath: string;
     private config: Config;
     private static hasShownInitialLog = false; // 使用静态变量跟踪是否显示过初始日志
+    private disposables: vscode.Disposable[] = [];
     
     private constructor() {
         this.eventEmitter = new EventEmitter();
@@ -48,6 +49,18 @@ export class ConfigManager {
 
             // 监听配置文件变化
             this.watchConfig();
+
+            // 监听VS Code配置变化
+            this.disposables.push(
+                vscode.workspace.onDidChangeConfiguration(e => {
+                    if (e.affectsConfiguration('gameServerCompiler')) {
+                        this.syncVSCodeConfig();
+                    }
+                })
+            );
+
+            // 初始同步VS Code配置
+            this.syncVSCodeConfig();
         } catch (error) {
             const logger = LogManager.getInstance();
             logger.log(`配置初始化失败: ${error}`, LogLevel.ERROR);
@@ -250,7 +263,25 @@ export class ConfigManager {
         logger.log(`登录信息${config.loginWithEmail ? '包含' : '不包含'}邮箱`, LogLevel.INFO);
     }
 
+    // 同步VS Code配置
+    private syncVSCodeConfig(): void {
+        const vsCodeConfig = vscode.workspace.getConfiguration('gameServerCompiler');
+        const autoCompileOnSave = vsCodeConfig.get<boolean>('compile.autoCompileOnSave');
+        
+        if (autoCompileOnSave !== undefined && 
+            autoCompileOnSave !== this.config.compile.autoCompileOnSave) {
+            this.updateConfig({
+                compile: {
+                    ...this.config.compile,
+                    autoCompileOnSave
+                }
+            });
+        }
+    }
+
+    // 清理资源
     dispose(): void {
-        this.eventEmitter.removeAllListeners();
+        this.disposables.forEach(d => d.dispose());
+        this.disposables = [];
     }
 } 

@@ -1404,10 +1404,18 @@ export class TcpClient implements IDisposable {
 
     private encodeMessage(message: string): Buffer {
         try {
+            this.outputChannel.appendLine('==== 编码消息 ====');
+            this.outputChannel.appendLine(`原始消息: ${message}`);
+            this.outputChannel.appendLine(`使用编码: ${this.encoding}`);
+            
             const encodedMessage = iconv.encode(message + '\n', this.encoding);
+            this.outputChannel.appendLine(`编码结果长度: ${encodedMessage.length}`);
+            this.outputChannel.appendLine(`编码结果: ${encodedMessage.toString('hex')}`);
+            
             this.log(`消息编码(${this.encoding}): ${message}`, LogLevel.DEBUG);
             return encodedMessage;
         } catch (error) {
+            this.outputChannel.appendLine(`消息编码失败: ${error}`);
             this.log(`消息编码失败: ${error}`, LogLevel.ERROR);
             throw error;
         }
@@ -1422,17 +1430,28 @@ export class TcpClient implements IDisposable {
         }
 
         try {
+            this.outputChannel.appendLine('==== 发送自定义命令 ====');
+            this.outputChannel.appendLine(`原始命令: ${command}`);
+            
             const buffer = this.encodeMessage(command);
+            this.outputChannel.appendLine(`编码后长度: ${buffer.length}`);
+            this.outputChannel.appendLine(`编码后内容: ${buffer.toString('hex')}`);
+            
             this.socket?.write(buffer);
             this.log(`发送自定义命令: ${command}`, LogLevel.INFO);
         } catch (error) {
+            this.outputChannel.appendLine(`发送自定义命令失败: ${error}`);
             this.log(`发送自定义命令失败: ${error}`, LogLevel.ERROR);
             throw error;
         }
     }
 
     public async sendEvalCommand(code: string): Promise<void> {
-        await this.sendCustomCommand(`eval return ${code}`);
+        this.outputChannel.appendLine('==== 发送Eval命令 ====');
+        this.outputChannel.appendLine(`原始代码: ${code}`);
+        const fullCommand = `eval return ${code}`;
+        this.outputChannel.appendLine(`完整命令: ${fullCommand}`);
+        await this.sendCustomCommand(fullCommand);
     }
 
     public async sendRestartCommand(): Promise<void> {

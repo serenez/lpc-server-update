@@ -16,9 +16,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _disposables: vscode.Disposable[] = [];
     private _customCommands: CustomCommand[] = [];
     private _customEvals: CustomCommand[] = [];
+    private _outputChannel: vscode.OutputChannel;
 
     constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
+        this._outputChannel = vscode.window.createOutputChannel('游戏服务器编译器');
         this.initializeAsync();
     }
 
@@ -62,12 +64,23 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             if (fs.existsSync(configPath)) {
                 const configData = fs.readFileSync(configPath, 'utf8');
                 const config = JSON.parse(configData);
+                
+                this._outputChannel.appendLine('==== 保存自定义命令 ====');
+                this._outputChannel.appendLine('自定义命令列表:');
+                this._customCommands.forEach(cmd => {
+                    this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+                });
+                this._outputChannel.appendLine('Eval命令列表:');
+                this._customEvals.forEach(cmd => {
+                    this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+                });
+                
                 config.customCommands = this._customCommands;
                 config.customEvals = this._customEvals;
                 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-                console.log('Saved custom commands');
             }
         } catch (error) {
+            this._outputChannel.appendLine(`保存自定义命令失败: ${error}`);
             console.error('Failed to save custom commands:', error);
         }
     }
@@ -84,6 +97,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             placeHolder: isEval ? 'memory_info()' : 'users'
         });
         if (!command) return;
+
+        this._outputChannel.appendLine(`==== 添加${isEval ? 'Eval' : '自定义'}命令 ====`);
+        this._outputChannel.appendLine(`命令名称: ${name}`);
+        this._outputChannel.appendLine(`命令内容: ${command}`);
 
         if (isEval) {
             this._customEvals.push({ name, command });
@@ -122,28 +139,33 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         this._disposables.push(
             webviewView.webview.onDidReceiveMessage(async message => {
                 try {
-                    console.log('Received message from webview:', message);
+                    this._outputChannel.appendLine('==== 接收WebView消息 ====');
+                    this._outputChannel.appendLine(`消息类型: ${message.type}`);
+                    
                     switch (message.type) {
                         case 'command':
-                            console.log('Executing command:', message.command);
+                            this._outputChannel.appendLine(`执行命令: ${message.command}`);
                             await vscode.commands.executeCommand(message.command);
                             break;
                         case 'customCommand':
-                            console.log('Executing custom command:', message.command);
+                            this._outputChannel.appendLine(`执行自定义命令: ${message.command}`);
                             await vscode.commands.executeCommand('game-server-compiler.sendCommand', message.command);
                             break;
                         case 'customEval':
-                            console.log('Executing custom eval:', message.command);
+                            this._outputChannel.appendLine(`执行Eval命令: ${message.command}`);
                             await vscode.commands.executeCommand('game-server-compiler.eval', message.command);
                             break;
                         case 'addCustomCommand':
+                            this._outputChannel.appendLine(`添加${message.isEval ? 'Eval' : '自定义'}命令`);
                             await this.addCustomCommand(message.isEval);
                             break;
                         case 'deleteCustomCommand':
+                            this._outputChannel.appendLine(`删除${message.isEval ? 'Eval' : '自定义'}命令: index=${message.index}`);
                             await this.deleteCustomCommand(message.index, message.isEval);
                             break;
                     }
                 } catch (error) {
+                    this._outputChannel.appendLine(`命令执行错误: ${error}`);
                     console.error('命令执行错误:', error);
                     vscode.window.showErrorMessage(`命令执行失败: ${error}`);
                 }
@@ -168,24 +190,38 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
     private updateView() {
         if (this._view) {
-            console.log('Updating view with state:', {
+            this._outputChannel.appendLine('==== 更新视图 ====');
+            this._outputChannel.appendLine(`连接状态: ${this._isConnected}`);
+            this._outputChannel.appendLine(`登录状态: ${this._isLoggedIn}`);
+            this._outputChannel.appendLine(`初始化状态: ${this._isInitialized}`);
+            this._outputChannel.appendLine('自定义命令:');
+            this._customCommands.forEach(cmd => {
+                this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+            });
+            this._outputChannel.appendLine('Eval命令:');
+            this._customEvals.forEach(cmd => {
+                this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+            });
+
+            // 发送状态更新消息
+            this._view.webview.postMessage({
+                type: 'updateState',
                 connected: this._isConnected,
                 loggedIn: this._isLoggedIn,
                 initialized: this._isInitialized,
                 customCommands: this._customCommands,
                 customEvals: this._customEvals
             });
-            this._view.webview.postMessage({ 
-                type: 'updateState', 
-                connected: this._isConnected,
-                loggedIn: this._isLoggedIn,
-                initialized: this._isInitialized,
-                customCommands: this._customCommands,
-                customEvals: this._customEvals
-            });
-        } else {
-            console.log('View is not available');
         }
+    }
+
+    private escapeHtml(text: string): string {
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
 
     private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -324,6 +360,22 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             }
         `;
 
+        const customCommandsHtml = this._customCommands.map((cmd, index) => `
+            <div class="dropdown-item" data-command="${this.escapeHtml(cmd.command)}">
+                <span class="button-icon">📎</span>
+                <span>${this.escapeHtml(cmd.name)}</span>
+                <span class="delete-button" data-index="${index}">🗑️</span>
+            </div>
+        `).join('');
+
+        const customEvalsHtml = this._customEvals.map((cmd, index) => `
+            <div class="dropdown-item" data-command="${this.escapeHtml(cmd.command)}">
+                <span class="button-icon">📎</span>
+                <span>${this.escapeHtml(cmd.name)}</span>
+                <span class="delete-button" data-index="${index}">🗑️</span>
+            </div>
+        `).join('');
+
         return `<!DOCTYPE html>
             <html lang="zh-CN">
             <head>
@@ -351,13 +403,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </button>
                     <div class="dropdown-content" id="customCommandsList">
                         <div class="dropdown-items-container">
-                            ${this._customCommands.map((cmd, index) => `
-                                <div class="dropdown-item" data-command="${cmd.command}">
-                                    <span class="button-icon">📎</span>
-                                    <span>${cmd.name}</span>
-                                    <span class="delete-button" data-index="${index}">🗑️</span>
-                                </div>
-                            `).join('')}
+                            ${customCommandsHtml}
                             <button class="add-button" id="addCustomCommand">
                                 <span class="button-icon">➕</span>
                                 <span>添加自定义命令</span>
@@ -374,13 +420,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </button>
                     <div class="dropdown-content" id="customEvalsList">
                         <div class="dropdown-items-container">
-                            ${this._customEvals.map((cmd, index) => `
-                                <div class="dropdown-item" data-command="${cmd.command}">
-                                    <span class="button-icon">📎</span>
-                                    <span>${cmd.name}</span>
-                                    <span class="delete-button" data-index="${index}">🗑️</span>
-                                </div>
-                            `).join('')}
+                            ${customEvalsHtml}
                             <button class="add-button" id="addCustomEval">
                                 <span class="button-icon">➕</span>
                                 <span>添加自定义Eval</span>
@@ -458,57 +498,16 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             });
                         });
 
-                        // 更新自定义命令列表
-                        function updateCustomCommandsList() {
-                            const list = document.getElementById('customCommandsList');
-                            if (list) {
-                                const commands = state.customCommands.map((cmd, index) => {
-                                    return '<div class="dropdown-item" data-command="' + cmd.command + '">' +
-                                        '<span class="button-icon">📎</span>' +
-                                        '<span>' + cmd.name + '</span>' +
-                                        '<span class="delete-button" data-index="' + index + '">🗑️</span>' +
-                                        '</div>';
-                                }).join('');
-                                
-                                list.innerHTML = commands + 
-                                    '<button class="add-button" id="addCustomCommand">' +
-                                    '<span class="button-icon">➕</span>' +
-                                    '<span>添加自定义命令</span>' +
-                                    '</button>';
-                                
-                                bindCustomCommandEvents(list, false);
-                            }
-                        }
-
-                        // 更新自定义Eval列表
-                        function updateCustomEvalsList() {
-                            const list = document.getElementById('customEvalsList');
-                            if (list) {
-                                const evals = state.customEvals.map((cmd, index) => {
-                                    return '<div class="dropdown-item" data-command="' + cmd.command + '">' +
-                                        '<span class="button-icon">📎</span>' +
-                                        '<span>' + cmd.name + '</span>' +
-                                        '<span class="delete-button" data-index="' + index + '">🗑️</span>' +
-                                        '</div>';
-                                }).join('');
-                                
-                                list.innerHTML = evals + 
-                                    '<button class="add-button" id="addCustomEval">' +
-                                    '<span class="button-icon">➕</span>' +
-                                    '<span>添加Eval命令</span>' +
-                                    '</button>';
-                                
-                                bindCustomCommandEvents(list, true);
-                            }
-                        }
-
                         // 绑定自定义命令事件
-                        function bindCustomCommandEvents(list, isEval) {
+                        function bindCustomCommandEvents(container, isEval) {
+                            console.log('Binding events for', isEval ? 'eval' : 'custom', 'commands');
+                            
                             // 绑定命令点击事件
-                            list.querySelectorAll('.dropdown-item').forEach(item => {
+                            container.querySelectorAll('.dropdown-item').forEach(item => {
                                 item.addEventListener('click', (e) => {
                                     if (!e.target.classList.contains('delete-button')) {
                                         const command = item.dataset.command;
+                                        console.log('Command clicked:', command);
                                         if (isEval) {
                                             vscode.postMessage({ 
                                                 type: 'customEval',
@@ -525,10 +524,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             });
 
                             // 绑定删除按钮事件
-                            list.querySelectorAll('.delete-button').forEach(button => {
+                            container.querySelectorAll('.delete-button').forEach(button => {
                                 button.addEventListener('click', (e) => {
                                     e.stopPropagation();
                                     const index = parseInt(button.dataset.index);
+                                    console.log('Delete button clicked:', index);
                                     vscode.postMessage({ 
                                         type: 'deleteCustomCommand',
                                         index: index,
@@ -536,18 +536,29 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     });
                                 });
                             });
-
-                            // 重新绑定添加按钮事件
-                            const addButton = list.querySelector(isEval ? '#addCustomEval' : '#addCustomCommand');
-                            if (addButton) {
-                                addButton.addEventListener('click', () => {
-                                    vscode.postMessage({ 
-                                        type: 'addCustomCommand',
-                                        isEval: isEval
-                                    });
-                                });
-                            }
                         }
+
+                        // 初始化时绑定事件
+                        const commandsList = document.getElementById('customCommandsList');
+                        const evalsList = document.getElementById('customEvalsList');
+                        if (commandsList) {
+                            const container = commandsList.querySelector('.dropdown-items-container');
+                            if (container) bindCustomCommandEvents(container, false);
+                        }
+                        if (evalsList) {
+                            const container = evalsList.querySelector('.dropdown-items-container');
+                            if (container) bindCustomCommandEvents(container, true);
+                        }
+
+                        // 点击外部关闭下拉菜单
+                        document.addEventListener('click', (e) => {
+                            const dropdowns = document.querySelectorAll('.dropdown');
+                            dropdowns.forEach(dropdown => {
+                                if (!dropdown.contains(e.target)) {
+                                    dropdown.classList.remove('open');
+                                }
+                            });
+                        });
 
                         // 更新按钮状态
                         function updateButtons() {
@@ -581,38 +592,21 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             });
                         }
 
-                        // 监听状态更新
+                        // 初始化时更新按钮状态
+                        updateButtons();
+
+                        // 监听状态更新消息
                         window.addEventListener('message', event => {
                             const message = event.data;
                             console.log('Received message:', message);
                             
                             if (message.type === 'updateState') {
                                 state = {
-                                    connected: message.connected,
-                                    loggedIn: message.loggedIn,
-                                    initialized: message.initialized,
-                                    customCommands: message.customCommands || [],
-                                    customEvals: message.customEvals || []
+                                    ...state,
+                                    ...message
                                 };
                                 updateButtons();
-                                updateCustomCommandsList();
-                                updateCustomEvalsList();
                             }
-                        });
-
-                        // 初始化
-                        updateButtons();
-                        updateCustomCommandsList();
-                        updateCustomEvalsList();
-
-                        // 点击外部关闭下拉菜单
-                        document.addEventListener('click', (e) => {
-                            const dropdowns = document.querySelectorAll('.dropdown');
-                            dropdowns.forEach(dropdown => {
-                                if (!dropdown.contains(e.target)) {
-                                    dropdown.classList.remove('open');
-                                }
-                            });
                         });
                     })();
                 </script>

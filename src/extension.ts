@@ -43,6 +43,8 @@ function convertToMudPath(fullPath: string): string {
         }
         // 移除文件扩展名
         relativePath = relativePath.replace(/\.[^/.]+$/, "");
+        // 移除根路径部分
+        relativePath = '/'+relativePath.replace(/^.*?\//, '');
         return relativePath;
     } catch (error) {
         throw new Error('路径转换失败');

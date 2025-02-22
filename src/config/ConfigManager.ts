@@ -47,6 +47,12 @@ export class ConfigManager {
             // 加载配置
             this.config = this.loadConfig();
 
+            // 确保 rootPath 只在第一次激活时读取
+            if (!ConfigManager.hasShownInitialLog) {
+                this.config.rootPath = this.getRootPath();
+                ConfigManager.hasShownInitialLog = true;
+            }
+
             // 监听配置文件变化
             this.watchConfig();
 
@@ -277,6 +283,14 @@ export class ConfigManager {
                 }
             });
         }
+    }
+
+    private getRootPath(): string {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+        if (!workspaceRoot) {
+            throw new Error('未找到工作区目录');
+        }
+        return workspaceRoot;
     }
 
     // 清理资源

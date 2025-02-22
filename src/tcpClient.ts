@@ -366,6 +366,11 @@ export class TcpClient implements IDisposable {
             
             this.log(`处理普通消息: ${cleanedMessage}`, LogLevel.DEBUG);
 
+            if (cleanedMessage.includes('你的账号在别处登录') || cleanedMessage.includes('你被迫下线了')) {
+                this.handleAccountLoggedInElsewhere();
+                return;
+            }
+
             if (cleanedMessage === '版本验证成功') {
                 this.log('版本验证成功，开始登录', LogLevel.INFO);
                 this.login();
@@ -391,9 +396,7 @@ export class TcpClient implements IDisposable {
             } else if (cleanedMessage.trim()) {
                 this.appendToGameLog(cleanedMessage);
                 
-                // 将服务器消息传递给消息提供者，标记为服务器消息
                 if (this.messageProvider) {
-                    // 所有从socket接收的消息都是服务器消息
                     this.messageProvider.addMessage(cleanedMessage, true);
                 }
             }
@@ -411,14 +414,18 @@ export class TcpClient implements IDisposable {
             case '000':
                 if (cleanedContent === '0007') {
                     this.log('收到登录成功信号', LogLevel.INFO);
-                this.setLoginState(true);
+                    this.setLoginState(true);
                 }
                 break;
-          case '014':
-            this.log(`收到014协议消息: ${cleanedContent}`, LogLevel.DEBUG);
-            this.sendCommand(cleanedContent);
+            case '014':
+                this.log(`收到014协议消息: ${cleanedContent}`, LogLevel.DEBUG);
+                this.sendCommand(cleanedContent);
                 break;
             case '015':
+                if (cleanedContent.includes('你的账号在别处登录') || cleanedContent.includes('你被迫下线了')) {
+                    this.handleAccountLoggedInElsewhere();
+                    return;
+                }
                 if (cleanedContent.includes('密码错误') || cleanedContent.includes('账号不存在')) {
                     this.log(cleanedContent, LogLevel.ERROR, false);
                     this.outputChannel.appendLine(`❌ ${cleanedContent}`);
@@ -1576,5 +1583,14 @@ export class TcpClient implements IDisposable {
         this.errorLine = 0;
         this.errorMessage = '';
         this.clearDiagnostics();
+    }
+
+    private handleAccountLoggedInElsewhere() {
+        this.disconnect();
+        vscode.window.showErrorMessage('⚠️ 您的账号在别处登录，所有TCP连接已断开！', { modal: true, detail: '请检查您的登录状态' });
+        this.messageProvider.addMessage('⚠️ 您的账号在别处登录，所有TCP连接已断开！');
+        this.stopReconnect();
+        this._isReconnecting = false;
+        this.reconnectAttempts = this.maxReconnectAttempts;
     }
 } 

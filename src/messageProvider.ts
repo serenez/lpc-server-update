@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { ConfigManager } from './config/ConfigManager';
 
 interface Config {
     rootPath: string;
@@ -27,32 +28,25 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     private async handleEncodingChange(currentEncoding: string) {
         try {
-            // 读取当前配置
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {
-                throw new Error('未找到工作区目录');
-            }
+            // 🚀 使用ConfigManager获取和更新配置
+            const configManager = ConfigManager.getInstance();
+            const config = configManager.getConfig();
 
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData) as Config;
-            
             // 直接切换编码
             const newEncoding = currentEncoding === 'UTF8' ? 'GBK' : 'UTF8';
-            config.encoding = newEncoding;
-            
-            // 保存配置
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-            
+
+            // 更新配置
+            await configManager.updateConfig({ encoding: newEncoding });
+
             // 更新按钮文本
-            this._view?.webview.postMessage({ 
+            this._view?.webview.postMessage({
                 type: 'updateEncoding',
                 encoding: newEncoding
             });
 
             // 显示成功消息
             this.addMessage(`编码设置已更改为: ${newEncoding}`);
-            
+
             // 通知需要重新连接
             vscode.window.showInformationMessage('编码设置已更改,需要重新连接服务器以应用更改。');
         } catch (error) {

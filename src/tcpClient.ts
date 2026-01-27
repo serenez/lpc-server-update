@@ -90,6 +90,16 @@ export class TcpClient implements IDisposable {
         this.messageProvider = messageProvider;
         this.configManager = ConfigManager.getInstance();
         this.config = vscode.workspace.getConfiguration('gameServerCompiler');
+
+        // 🚀 监听配置切换事件
+        this.configManager.onProfileChanged((event) => {
+            this.log(`配置已切换: ${event.oldProfile} -> ${event.newProfile}`, LogLevel.INFO);
+            if (this.isConnected()) {
+                this.log('配置已切换，断开连接', LogLevel.INFO);
+                this.disconnect();
+            }
+        });
+
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('gameServerCompiler.connection')) {
                 this.config = vscode.workspace.getConfiguration('gameServerCompiler');
@@ -748,13 +758,8 @@ export class TcpClient implements IDisposable {
 
     private async sendKey() {
         try {
-            const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
-            if (!fs.existsSync(configPath)) {
-                throw new Error('配置文件不存在，请先配置muy-lpc-update.json');
-            }
-
-            const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData);
+            // 🚀 使用ConfigManager获取当前激活的配置
+            const config = this.configManager.getConfig();
 
             if (!config.serverKey) {
                 throw new Error('服务器密钥未配置，请在muy-lpc-update.json中配置serverKey');
@@ -762,7 +767,7 @@ export class TcpClient implements IDisposable {
 
             const key = this.sha1(config.serverKey);
             this.log('发送验证密钥...', LogLevel.DEBUG);
-            
+
             const encodedKey = MessageParser.stringToBuffer(key + '\n', this.encoding);
             this.socket?.write(encodedKey, () => {
                 this.log('验证密钥发送完成', LogLevel.DEBUG);
@@ -776,25 +781,19 @@ export class TcpClient implements IDisposable {
 
     private async login() {
         try {
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {
-                throw new Error('未找到工作区目录');
-            }
-
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData);
+            // 🚀 使用ConfigManager获取当前激活的配置
+            const config = this.configManager.getConfig();
 
             this.log('开始登录...', LogLevel.INFO);
             this.log(`当前状态: connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.INFO);
-            
+
             const loginKey = config.loginKey || 'buyi-ZMuy';
-            const loginString = config.loginWithEmail ? 
+            const loginString = config.loginWithEmail ?
                 `${config.username}║${config.password}║${loginKey}║zmuy@qq.com\n` :
                 `${config.username}║${config.password}║${loginKey}\n`;
-            
+
             this.log(`发送登录信息: ${loginString}`, LogLevel.INFO);
-            
+
             const encodedData = MessageParser.stringToBuffer(loginString, this.encoding);
             this.socket?.write(encodedData, () => {
                 this.log('登录信息发送完成', LogLevel.DEBUG);

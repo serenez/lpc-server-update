@@ -92,6 +92,36 @@ async function checkAndUpdateServerConfig(): Promise<boolean> {
     return true;
 }
 
+// 🚀 处理配置切换
+async function handleProfileSwitch(profileId: string): Promise<void> {
+    // 检查连接状态
+    if (tcpClient.isConnected()) {
+        const confirm = await vscode.window.showWarningMessage(
+            '切换配置需要断开当前连接，是否继续？',
+            { modal: true },
+            '继续',
+            '取消'
+        );
+
+        if (confirm !== '继续') {
+            return;
+        }
+
+        // 断开连接
+        tcpClient.disconnect();
+        messageProvider?.addMessage('已断开服务器连接');
+    }
+
+    // 切换配置
+    await configManager.switchProfile(profileId);
+
+    // 显示提示
+    const profiles = configManager.getAllProfiles();
+    vscode.window.showInformationMessage(
+        `已切换到配置: ${profiles[profileId]?.name || profileId}`
+    );
+}
+
 // 检查并更新用户配置
 async function checkAndUpdateUserConfig(): Promise<boolean> {
     const config = configManager.getConfig();
@@ -508,6 +538,40 @@ export async function activate(context: vscode.ExtensionContext) {
                 outputChannel.appendLine(`重置性能指标失败: ${error}`);
                 messageProvider?.addMessage(`重置性能指标失败: ${error}`);
                 vscode.window.showErrorMessage(`重置性能指标失败: ${error}`);
+            }
+        },
+        'game-server-compiler.switchProfile': async (profileId?: string) => {
+            outputChannel.appendLine('==== 切换配置环境 ====');
+            try {
+                // 如果没有指定配置ID，显示选择器
+                if (!profileId) {
+                    const profiles = configManager.getAllProfiles();
+                    const profileIds = Object.keys(profiles);
+
+                    if (profileIds.length === 0) {
+                        vscode.window.showErrorMessage('没有可用的配置');
+                        return;
+                    }
+
+                    const items = profileIds.map(id => ({
+                        label: profiles[id].name || id,
+                        description: `切换到配置: ${id}`,
+                        value: id
+                    }));
+
+                    const selected = await vscode.window.showQuickPick(items, {
+                        placeHolder: '选择要切换的配置'
+                    });
+
+                    if (selected) {
+                        await handleProfileSwitch(selected.value);
+                    }
+                } else {
+                    await handleProfileSwitch(profileId);
+                }
+            } catch (error) {
+                outputChannel.appendLine(`切换配置失败: ${error}`);
+                vscode.window.showErrorMessage(`切换配置失败: ${error}`);
             }
         },
         'game-server-compiler.resetProjectPath': async () => {

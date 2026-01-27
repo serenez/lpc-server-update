@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MessageProvider } from './messageProvider';
+import { ConfigManager } from './config/ConfigManager';
+import { LogManager, LogLevel } from './log/LogManager';
 
 interface CustomCommand {
     name: string;
@@ -17,10 +19,12 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _customCommands: CustomCommand[] = [];
     private _customEvals: CustomCommand[] = [];
     private _outputChannel: vscode.OutputChannel;
+    private _configManager: ConfigManager; // 🚀 新增：配置管理器引用
 
     constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
         this._outputChannel = vscode.window.createOutputChannel('游戏服务器编译器');
+        this._configManager = ConfigManager.getInstance(); // 🚀 获取配置管理器实例
         this.initializeAsync();
     }
 
@@ -170,7 +174,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private async editCustomCommand(index: number, isEval: boolean = false) {
         const commands = isEval ? this._customEvals : this._customCommands;
         const command = commands[index];
-        
+
         if (!command) return;
 
         const name = await vscode.window.showInputBox({
@@ -189,7 +193,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
         commands[index] = { name, command: commandStr };
         await this.saveCustomCommands();
-        
+
         // 立即更新WebView
         if (this._view) {
             const commandsHtml = this.generateCommandsHtml(isEval);
@@ -198,6 +202,108 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 isEval: isEval,
                 html: commandsHtml
             });
+        }
+    }
+
+    // 🚀 ========== 新增：配置切换处理 ==========
+
+    /**
+     * 🚀 处理配置切换
+     */
+    private async handleSwitchProfile(profileId: string): Promise<void> {
+        try {
+            this._outputChannel.appendLine(`==== 切换配置环境 ====`);
+            this._outputChannel.appendLine(`目标配置: ${profileId}`);
+
+            // 切换配置
+            await this._configManager.switchProfile(profileId);
+
+            // 更新UI
+            this.updateView();
+
+            // 显示提示
+            const profiles = this._configManager.getAllProfiles();
+            const profile = profiles[profileId];
+            vscode.window.showInformationMessage(
+                `已切换到配置: ${profile?.name || profileId}`
+            );
+
+            this._outputChannel.appendLine(`配置切换成功: ${profile?.name || profileId}`);
+        } catch (error) {
+            this._outputChannel.appendLine(`切换配置失败: ${error}`);
+            vscode.window.showErrorMessage(`切换配置失败: ${error}`);
+        }
+    }
+
+    /**
+     * 🚀 处理添加新配置
+     */
+    private async handleAddProfile(): Promise<void> {
+        try {
+            this._outputChannel.appendLine(`==== 添加新配置 ====`);
+            const logger = LogManager.getInstance();
+            logger.log('开始添加新配置', LogLevel.INFO);
+
+            // 输入配置名称
+            const profileName = await vscode.window.showInputBox({
+                prompt: '输入新配置的名称（例如：测试服务器、生产环境）',
+                placeHolder: '配置1',
+                ignoreFocusOut: true
+            });
+
+            if (!profileName) {
+                this._outputChannel.appendLine('用户取消添加配置');
+                return;
+            }
+
+            // 生成配置ID（使用时间戳确保唯一）
+            const profileId = `profile_${Date.now()}`;
+
+            // 获取当前工作区路径作为默认值
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
+
+            // 创建新配置（复制当前配置作为模板）
+            const currentConfig = this._configManager.getConfig();
+            const newProfile: any = {
+                name: profileName,
+                host: '',  // 清空，让用户重新配置
+                port: 0,
+                username: '',
+                password: '',
+                rootPath: workspaceRoot,
+                serverKey: 'buyi-SerenezZmuy',
+                encoding: 'UTF8',
+                loginKey: 'buyi-ZMuy',
+                loginWithEmail: false,
+                compile: {
+                    defaultDir: '',
+                    autoCompileOnSave: false,
+                    timeout: 30000,
+                    showDetails: true
+                },
+                connection: {
+                    timeout: 10000,
+                    maxRetries: 3,
+                    retryInterval: 5000,
+                    heartbeatInterval: 30000
+                }
+            };
+
+            // 添加新配置
+            await this._configManager.addProfile(profileId, newProfile);
+
+            this._outputChannel.appendLine(`新配置已添加: ${profileName} (${profileId})`);
+            logger.log(`新配置已添加: ${profileName} (${profileId})`, LogLevel.INFO);
+
+            // 更新UI
+            this.updateView();
+
+            vscode.window.showInformationMessage(
+                `新配置 "${profileName}" 已添加，请配置服务器信息后使用`
+            );
+        } catch (error) {
+            this._outputChannel.appendLine(`添加配置失败: ${error}`);
+            vscode.window.showErrorMessage(`添加配置失败: ${error}`);
         }
     }
 
@@ -288,6 +394,14 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             this._outputChannel.appendLine(`删除${message.isEval ? 'Eval' : '自定义'}命令: index=${message.index}`);
                             await this.deleteCustomCommand(message.index, message.isEval);
                             break;
+                        case 'switchProfile':
+                            this._outputChannel.appendLine(`切换配置环境: ${message.profileId}`);
+                            await this.handleSwitchProfile(message.profileId);
+                            break;
+                        case 'addProfile':
+                            this._outputChannel.appendLine('添加新配置');
+                            await this.handleAddProfile();
+                            break;
                     }
                 } catch (error) {
                     this._outputChannel.appendLine(`命令执行错误: ${error}`);
@@ -314,7 +428,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * 🚀 获取当前配置信息
+     * 🚀 获取当前配置信息 - 适配版本2格式
      */
     private getCurrentConfig() {
         try {
@@ -323,12 +437,28 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
             if (fs.existsSync(configPath)) {
                 const configData = fs.readFileSync(configPath, 'utf8');
-                return JSON.parse(configData);
+                const config = JSON.parse(configData);
+
+                // 🚀 如果是版本2格式，返回当前激活的配置
+                if (config.version >= 2 && config.profiles) {
+                    const activeProfile = config.profiles[config.activeProfile];
+                    return {
+                        ...activeProfile,
+                        activeProfile: config.activeProfile,
+                        profiles: config.profiles
+                    };
+                }
+
+                return config;
             }
         } catch (error) {
             console.error('Failed to get current config:', error);
         }
-        return { rootPath: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '' };
+        return {
+            rootPath: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '',
+            activeProfile: 'default',
+            profiles: {}
+        };
     }
 
     private updateView() {
@@ -347,6 +477,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             });
 
             // 发送状态更新消息
+            const config = this.getCurrentConfig();
             this._view.webview.postMessage({
                 type: 'updateState',
                 connected: this._isConnected,
@@ -354,7 +485,9 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 initialized: this._isInitialized,
                 customCommands: this._customCommands,
                 customEvals: this._customEvals,
-                config: this.getCurrentConfig()
+                config: config,
+                profiles: config.profiles || {},
+                activeProfileId: config.activeProfile || 'default'
             });
         }
     }
@@ -362,39 +495,39 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _getHtmlForWebview(webview: vscode.Webview): string {
         const buttonStyle = `
             body {
-                padding: 16px;
+                padding: 12px;
                 display: flex;
                 flex-direction: column;
-                gap: 12px;
+                gap: 8px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
-            
+
             .button-row {
                 display: flex;
-                gap: 12px;
+                gap: 8px;
                 width: 100%;
             }
-            
+
             .button-row button {
                 flex: 1;
                 min-width: 0;
             }
-            
+
             button {
-                padding: 10px 18px;
+                padding: 8px 12px;
                 background: var(--vscode-button-background);
                 color: var(--vscode-button-foreground);
                 border: none;
-                border-radius: 8px;
+                border-radius: 6px;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 8px;
-                font-size: 13px;
+                gap: 6px;
+                font-size: 12px;
                 font-weight: 500;
                 transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-                min-height: 36px;
+                min-height: 32px;
                 position: relative;
                 box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
                 backdrop-filter: blur(10px);
@@ -451,19 +584,22 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             .dropdown-content {
                 display: none;
                 position: relative;
-                background: color-mix(in srgb, var(--vscode-dropdown-background) 80%, transparent);
+                background: #2d2d30 !important;
                 border: 1px solid var(--vscode-dropdown-border);
-                border-radius: 10px;
-                margin-top: 6px;
+                border-radius: 8px;
+                margin-top: 4px;
                 overflow: hidden;
-                padding: 6px;
+                padding: 4px;
                 width: 100%;
                 box-sizing: border-box;
-                backdrop-filter: blur(20px);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
                 animation: dropdownFadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
-            
+
+            .dropdown-content:hover {
+                background: #2d2d30 !important;
+            }
+
             @keyframes dropdownFadeIn {
                 from {
                     opacity: 0;
@@ -474,9 +610,24 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     transform: translateY(0);
                 }
             }
-            
+
             .dropdown.open .dropdown-content {
                 display: block;
+            }
+
+            .dropdown-items-container {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 6px;
+                width: 100%;
+                box-sizing: border-box;
+                padding: 0;
+                margin: 0;
+                background: #2d2d30 !important;
+            }
+
+            .dropdown-items-container:hover {
+                background: #2d2d30 !important;
             }
             
             .dropdown-items-container {
@@ -492,30 +643,26 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             .dropdown-item {
                 display: flex;
                 align-items: center;
-                padding: 8px 14px;
-                gap: 8px;
+                padding: 6px 10px;
+                gap: 6px;
                 cursor: pointer;
                 transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 box-sizing: border-box;
-                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 90%, transparent);
-                border-radius: 6px;
-                min-height: 36px;
+                background: transparent;
+                border-radius: 4px;
+                min-height: 30px;
                 position: relative;
-                backdrop-filter: blur(10px);
-                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+                color: var(--vscode-foreground);
             }
-            
+
             .dropdown-item:hover {
-                background: var(--vscode-list-hoverBackground);
-                transform: translateY(-1px);
-                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1),
-                            0 2px 4px rgba(0, 0, 0, 0.05);
+                background: #3c3c3c !important;
             }
-            
+
             .dropdown-item:active {
                 transform: translateY(0);
             }
-            
+
             .dropdown-item .button-group {
                 margin-left: auto;
                 display: flex;
@@ -523,11 +670,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 opacity: 0;
                 transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
-            
+
             .dropdown-item:hover .button-group {
                 opacity: 1;
             }
-            
+
             .edit-button,
             .delete-button {
                 padding: 2px 6px;
@@ -535,34 +682,33 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 cursor: pointer;
                 transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
-            
+
             .edit-button:hover {
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(255, 255, 255, 0.1) !important;
             }
-            
+
             .delete-button:hover {
-                background: rgba(255, 0, 0, 0.1);
+                background: rgba(255, 0, 0, 0.1) !important;
             }
-            
+
             .add-button {
                 grid-column: 1 / -1;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 padding: 8px 14px;
-                background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 70%, transparent);
+                background: #2d2d30;
                 color: var(--vscode-button-secondaryForeground);
-                border: 1px dashed color-mix(in srgb, var(--vscode-button-border) 50%, transparent);
+                border: 1px dashed var(--vscode-button-border);
                 margin: 4px 0;
                 border-radius: 6px;
                 min-height: 36px;
                 cursor: pointer;
                 transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-                backdrop-filter: blur(10px);
             }
-            
+
             .add-button:hover {
-                background: var(--vscode-button-secondaryHoverBackground);
+                background: #3c3c3c !important;
                 transform: translateY(-1px);
                 border-style: solid;
                 box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
@@ -656,6 +802,102 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             /* 🚀 连接地址特殊颜色 */
             #config-hostPort {
                 color: #2196F3; /* 🚀 鲜艳的蓝色 */
+            }
+
+            /* 🚀 配置环境选择器样式 */
+            .profile-selector {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 12px;
+                padding: 10px;
+                background: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 8px;
+            }
+
+            .selector-label {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 12px;
+                color: var(--vscode-descriptionForeground);
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
+            .profile-dropdown {
+                flex: 1;
+                padding: 6px 10px;
+                background: var(--vscode-dropdown-background);
+                color: var(--vscode-dropdown-foreground);
+                border: 1px solid var(--vscode-dropdown-border);
+                border-radius: 6px;
+                font-size: 13px;
+                cursor: pointer;
+                outline: none;
+                transition: all 0.2s;
+            }
+
+            .profile-dropdown:hover {
+                background: var(--vscode-dropdown-listBackground);
+                border-color: var(--vscode-focusBorder);
+            }
+
+            .profile-dropdown:focus {
+                border-color: var(--vscode-focusBorder);
+                box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+            }
+
+            .icon-button {
+                padding: 6px 10px;
+                background: var(--vscode-button-secondaryBackground);
+                border: 1px solid var(--vscode-button-border);
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: all 0.2s;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .icon-button:hover {
+                background: var(--vscode-button-secondaryHoverBackground);
+                transform: scale(1.1);
+            }
+
+            .icon-button:active {
+                transform: scale(0.95);
+            }
+
+            /* 🚀 切换按钮样式 */
+            .use-button {
+                padding: 4px 12px;
+                background: var(--vscode-button-secondaryBackground);
+                color: var(--vscode-button-secondaryForeground);
+                border: 1px solid var(--vscode-button-border);
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 11px;
+                font-weight: 500;
+                transition: all 0.2s;
+                white-space: nowrap;
+            }
+
+            .use-button:hover {
+                background: var(--vscode-button-secondaryHoverBackground);
+            }
+
+            .use-button:active {
+                transform: scale(0.95);
+            }
+
+            /* 🚀 当前配置高亮 */
+            .config-value.current-profile {
+                color: #FFA726 !important;
+                font-weight: 600;
+                font-size: 13px;
             }
         `;
 
@@ -751,8 +993,27 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <span>${this._isConnected ? '断开服务器' : '连接游戏服务器'}</span>
                 </button>
 
+                <!-- 🚀 配置环境选择器 -->
+                <div class="profile-selector">
+                    <label class="selector-label">
+                        <span class="config-icon">⚙️</span>
+                        <span>配置环境</span>
+                    </label>
+                    <select id="profile-select" class="profile-dropdown">
+                        <!-- 动态生成 -->
+                    </select>
+                    <button id="use-profile" class="use-button">切换</button>
+                </div>
+
                 <!-- 🚀 配置显示区 -->
                 <div class="config-display">
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">🎯</span>
+                            <span>当前配置</span>
+                        </div>
+                        <div class="config-value current-profile" id="config-currentProfile">未配置</div>
+                    </div>
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">📁</span>
@@ -778,7 +1039,9 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             initialized: ${this._isInitialized},
                             customCommands: ${JSON.stringify(this._customCommands)},
                             customEvals: ${JSON.stringify(this._customEvals)},
-                            config: ${JSON.stringify(this.getCurrentConfig())}
+                            config: ${JSON.stringify(this.getCurrentConfig())},
+                            profiles: ${JSON.stringify(this.getCurrentConfig().profiles || {})},
+                            activeProfileId: '${this.getCurrentConfig().activeProfile || 'default'}'
                         };
 
                         // 命令映射
@@ -906,6 +1169,62 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             });
                         });
 
+                        // 🚀 配置选择器初始化
+                        const profileSelect = document.getElementById('profile-select');
+                        if (profileSelect) {
+                            profileSelect.addEventListener('change', (e) => {
+                                const value = e.target.value;
+                                if (value === '__add_new__') {
+                                    // 添加新配置
+                                    console.log('添加新配置');
+                                    vscode.postMessage({ type: 'addProfile' });
+                                    // 重置回当前配置
+                                    e.target.value = state.activeProfileId;
+                                } else {
+                                    console.log('选中配置:', value);
+                                }
+                            });
+                        }
+
+                        // 🚀 使用选中的配置
+                        document.getElementById('use-profile')?.addEventListener('click', () => {
+                            const select = document.getElementById('profile-select');
+                            if (select && select.value !== '__add_new__') {
+                                const profileId = select.value;
+                                console.log('使用配置:', profileId);
+                                vscode.postMessage({
+                                    type: 'switchProfile',
+                                    profileId: profileId
+                                });
+                            }
+                        });
+
+                        // 🚀 更新配置选择器
+                        function updateProfileSelector() {
+                            const select = document.getElementById('profile-select');
+                            if (!select) return;
+
+                            select.innerHTML = '';
+
+                            Object.entries(state.profiles).forEach(([id, profile]) => {
+                                const option = document.createElement('option');
+                                option.value = id;
+                                option.textContent = profile.name || id;
+                                option.selected = id === state.activeProfileId;
+                                select.appendChild(option);
+                            });
+
+                            // 🚀 添加"添加新配置"选项
+                            const addOption = document.createElement('option');
+                            addOption.value = '__add_new__';
+                            addOption.textContent = '➕ 添加新配置...';
+                            addOption.style.color = 'var(--vscode-textLink-foreground)';
+                            addOption.style.fontStyle = 'italic';
+                            select.appendChild(addOption);
+
+                            console.log('配置选择器已更新，当前配置:', state.activeProfileId);
+                        }
+
                         // 更新按钮状态
                         function updateButtons() {
                             Object.keys(commands).forEach(id => {
@@ -940,7 +1259,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                 }
                             });
 
-                            // 🚀 更新配置显示
+                            // 🚀 更新配置选择器和显示
+                            updateProfileSelector();
                             updateConfigDisplay();
                         }
 
@@ -948,10 +1268,26 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         function updateConfigDisplay() {
                             const rootPathEl = document.getElementById('config-rootPath');
                             const hostPortEl = document.getElementById('config-hostPort');
+                            const currentProfileEl = document.getElementById('config-currentProfile');
+
+                            // 🚀 从当前激活的配置中获取信息
+                            const activeProfile = state.profiles && state.profiles[state.activeProfileId];
+                            const config = activeProfile || state.config;
+
+                            // 🚀 更新当前配置名称
+                            if (currentProfileEl) {
+                                if (activeProfile && activeProfile.name) {
+                                    currentProfileEl.textContent = activeProfile.name;
+                                    currentProfileEl.classList.remove('empty');
+                                } else {
+                                    currentProfileEl.textContent = '未配置';
+                                    currentProfileEl.classList.add('empty');
+                                }
+                            }
 
                             if (rootPathEl) {
-                                if (state.config && state.config.rootPath) {
-                                    rootPathEl.textContent = state.config.rootPath;
+                                if (config && config.rootPath) {
+                                    rootPathEl.textContent = config.rootPath;
                                     rootPathEl.classList.remove('empty');
                                 } else {
                                     rootPathEl.textContent = '未配置';
@@ -960,9 +1296,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             }
 
                             if (hostPortEl) {
-                                if (state.config && state.config.host && state.config.port) {
-                                    // 🚀 修复：直接拼接变量，不要用字符串字面量
-                                    hostPortEl.textContent = state.config.host + ':' + state.config.port;
+                                if (config && config.host && config.port) {
+                                    hostPortEl.textContent = config.host + ':' + config.port;
                                     hostPortEl.classList.remove('empty');
                                 } else {
                                     hostPortEl.textContent = '未配置';
@@ -971,8 +1306,9 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             }
                         }
 
-                        // 初始化时更新按钮状态
+                        // 初始化时更新按钮状态和配置选择器
                         updateButtons();
+                        updateProfileSelector();
 
                         // 监听状态更新消息
                         window.addEventListener('message', event => {

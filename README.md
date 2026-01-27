@@ -2,13 +2,15 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.1.10-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
 一个专业的 VS Code 扩展，为 LPC 游戏开发者提供完整的服务器连接和管理解决方案。
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
+
+[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.0 - 多配置环境支持**
 
 </div>
 
@@ -94,24 +96,87 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 3. 输入 `ext install BUYI-ZMuy.lpc-server-update`
 
 ### 2️⃣ 配置
+
+#### 新版本格式（V2）- 多配置环境支持
+
 在 `.vscode/muy-lpc-update.json` 中配置：
 
 <pre>
 <code class="json">{
-    "host": "服务器地址",
-    "port": 端口号,
-    "username": "巫师账号",
-    "password": "密码",
-    "serverKey": "buyi-SerenezZmuy",
-    "encoding": "UTF8",
-    "loginKey": "登录KEY",
-    "compile": {
+  "version": 2,
+  "activeProfile": "default",
+  "profiles": {
+    "default": {
+      "name": "本地开发环境",
+      "host": "服务器地址",
+      "port": 端口号,
+      "username": "巫师账号",
+      "password": "密码",
+      "rootPath": "项目根目录",
+      "serverKey": "buyi-SerenezZmuy",
+      "encoding": "UTF8",
+      "loginKey": "buyi-ZMuy",
+      "loginWithEmail": false,
+      "compile": {
+        "defaultDir": "/cmds",
         "autoCompileOnSave": false,
-        "defaultDir": "",
-        "timeout": 30000
+        "timeout": 30000,
+        "showDetails": true
+      },
+      "connection": {
+        "timeout": 10000,
+        "maxRetries": 3,
+        "retryInterval": 5000,
+        "heartbeatInterval": 30000
+      }
+    },
+    "remote": {
+      "name": "远程测试服务器",
+      "host": "192.168.1.100",
+      ...
     }
+  }
 }</code>
 </pre>
+
+#### 多配置环境管理功能
+
+- ⚙️ **配置环境选择器**：在UI中快速切换不同的服务器配置
+- ➕ **添加新配置**：支持添加多个配置环境（本地、测试、生产等）
+- 🔄 **一键切换**：点击"切换"按钮即可切换配置，自动断开当前连接
+- 📝 **自定义配置名称**：可给每个配置设置易识别的名称
+- 🔄 **自动迁移**：旧版本配置会自动迁移到新格式
+
+<details>
+<summary><b>📖 旧版本格式（V1）自动迁移</b></summary>
+
+如果是旧版本配置，插件会自动迁移到新格式，无需手动修改。
+
+旧格式：
+```json
+{
+  "host": "localhost",
+  "port": 8080,
+  ...
+}
+```
+
+自动迁移后：
+```json
+{
+  "version": 2,
+  "activeProfile": "default",
+  "profiles": {
+    "default": {
+      "name": "默认配置",
+      "host": "localhost",
+      "port": 8080,
+      ...
+    }
+  }
+}
+```
+</details>
 
 ### 3️⃣ 开始使用
 1. 点击左侧活动栏的 LPC 图标
@@ -121,6 +186,13 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ---
 
 ## 🛠️ 功能特性
+
+### ⚙️ 多配置环境管理 ⭐ NEW
+- **多服务器配置**：支持同时配置多个服务器环境（本地、测试、生产等）
+- **快速切换**：一键切换不同配置，无需手动修改配置文件
+- **配置隔离**：不同环境的配置完全独立，互不干扰
+- **自动迁移**：旧版本配置自动升级到新格式
+- **智能断连**：切换配置时自动断开当前连接，避免冲突
 
 ### 🔌 服务器连接
 - 一键连接/断开服务器
@@ -174,11 +246,28 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ## ❓ 常见问题
 
 <details>
+<summary><b>⚙️ 多配置环境管理</b></summary>
+
+**Q: 如何添加新的服务器配置？**
+A: 在配置环境选择器中选择"➕ 添加新配置..."，输入配置名称即可
+
+**Q: 如何切换配置？**
+A: 在下拉菜单中选择配置，然后点击"切换"按钮
+
+**Q: 切换配置会影响现有连接吗？**
+A: 会。如果已连接服务器，切换配置前会自动断开连接
+
+**Q: 旧版本的配置怎么办？**
+A: 插件会自动迁移到新格式，无需手动修改
+</details>
+
+<details>
 <summary><b>🔌 连接失败</b></summary>
 
 1. 检查服务器地址和端口
 2. 确认网络连接
 3. 验证登录信息
+4. 确认当前使用的配置环境是否正确
 </details>
 
 <details>
@@ -187,6 +276,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 1. 检查文件路径
 2. 查看错误信息
 3. 确认编码设置
+4. 确认当前配置环境的项目路径
 </details>
 
 <details>
@@ -195,6 +285,14 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 1. 检查编码设置
 2. 切换到 GBK 编码
 3. 重新连接服务器
+</details>
+
+<details>
+<summary><b>💾 配置文件未更新</b></summary>
+
+1. 检查是否保存了配置文件
+2. 配置修改后会立即生效，无需重新加载窗口
+3. 如果仍有问题，尝试重新加载VS Code窗口
 </details>
 
 ---

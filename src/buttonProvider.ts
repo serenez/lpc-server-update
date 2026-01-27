@@ -217,6 +217,45 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         // 设置初始HTML
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+        // 🚀 监听配置文件变化，实时更新配置显示
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+        if (workspaceRoot) {
+            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
+            if (fs.existsSync(configPath)) {
+                let configUpdateTimer: NodeJS.Timeout | null = null;
+                const configWatcher = fs.watch(configPath, (eventType) => {
+                    if (eventType === 'change') {
+                        // 🚀 防抖：清除之前的定时器，重新计时
+                        if (configUpdateTimer) {
+                            clearTimeout(configUpdateTimer);
+                        }
+                        // 延迟200ms，确保文件写入完成
+                        configUpdateTimer = setTimeout(() => {
+                            try {
+                                // 检查文件内容是否为空
+                                const configData = fs.readFileSync(configPath, 'utf8');
+                                if (configData && configData.trim() !== '') {
+                                    this._outputChannel.appendLine('==== 配置文件已修改 ====');
+                                    this.updateView();
+                                }
+                                // 文件为空时不输出日志，这是正常的文件保存过程
+                            } catch (error) {
+                                // 只在真正读取失败时输出错误
+                                this._outputChannel.appendLine(`读取配置文件失败: ${error}`);
+                            }
+                            configUpdateTimer = null;
+                        }, 200);
+                    }
+                });
+                this._disposables.push(new vscode.Disposable(() => {
+                    if (configUpdateTimer) {
+                        clearTimeout(configUpdateTimer);
+                    }
+                    configWatcher.close();
+                }));
+            }
+        }
+
         // 处理消息
         this._disposables.push(
             webviewView.webview.onDidReceiveMessage(async message => {
@@ -274,6 +313,24 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         this.updateView();
     }
 
+    /**
+     * 🚀 获取当前配置信息
+     */
+    private getCurrentConfig() {
+        try {
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            const configPath = path.join(workspaceRoot || '', '.vscode', 'muy-lpc-update.json');
+
+            if (fs.existsSync(configPath)) {
+                const configData = fs.readFileSync(configPath, 'utf8');
+                return JSON.parse(configData);
+            }
+        } catch (error) {
+            console.error('Failed to get current config:', error);
+        }
+        return { rootPath: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '' };
+    }
+
     private updateView() {
         if (this._view) {
             this._outputChannel.appendLine('==== 更新视图 ====');
@@ -296,7 +353,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 loggedIn: this._isLoggedIn,
                 initialized: this._isInitialized,
                 customCommands: this._customCommands,
-                customEvals: this._customEvals
+                customEvals: this._customEvals,
+                config: this.getCurrentConfig()
             });
         }
     }
@@ -543,6 +601,62 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             ::-webkit-scrollbar-thumb:hover {
                 background: var(--vscode-scrollbarSlider-hoverBackground);
             }
+
+            /* 🚀 配置显示区样式 */
+            .config-display {
+                margin-top: 12px;
+                padding: 12px;
+                background: color-mix(in srgb, var(--vscode-editor-background) 60%, transparent);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 8px;
+                font-size: 12px;
+                backdrop-filter: blur(10px);
+            }
+
+            .config-item {
+                display: flex;
+                flex-direction: column;
+                padding: 8px 0;
+                gap: 4px;
+            }
+
+            .config-item .config-label {
+                color: var(--vscode-descriptionForeground);
+                font-weight: 500;
+                font-size: 11px;
+                opacity: 0.7;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .config-item .config-value {
+                color: #4FC3F7; /* 🚀 鲜艳的粉红色 */
+                flex: 1;
+                font-family: 'Courier New', monospace;
+                word-break: break-all;
+                font-size: 13px; /* 🚀 字体加大 */
+                font-weight: 500;
+                padding-left: 26px; /* 🚀 与图标对齐 */
+                line-height: 1.4;
+            }
+
+            .config-item .config-icon {
+                font-size: 14px;
+                opacity: 0.7;
+            }
+
+            .config-item .config-value.empty {
+                color: var(--vscode-descriptionForeground);
+                opacity: 0.5;
+                font-style: italic;
+                font-size: 12px;
+            }
+
+            /* 🚀 连接地址特殊颜色 */
+            #config-hostPort {
+                color: #2196F3; /* 🚀 鲜艳的蓝色 */
+            }
         `;
 
         const customCommandsHtml = this._customCommands.map((cmd, index) => `
@@ -620,16 +734,40 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </div>
                 </div>
 
-                <button id="restart" disabled>
-                    <span class="button-icon">🔃</span>
-                    <span>重启服务器</span>
-                </button>
+                <div class="button-row">
+                    <button id="restart" disabled>
+                        <span class="button-icon">🔃</span>
+                        <span>重启服务器</span>
+                    </button>
+                    <button id="resetProjectPath">
+                        <span class="button-icon">🔄</span>
+                        <span>重置项目路径</span>
+                    </button>
+                </div>
 
                 <div class="divider"></div>
                 <button id="connect" class="${this._isConnected ? 'connected' : ''}">
                     <span class="button-icon">🔌</span>
                     <span>${this._isConnected ? '断开服务器' : '连接游戏服务器'}</span>
                 </button>
+
+                <!-- 🚀 配置显示区 -->
+                <div class="config-display">
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">📁</span>
+                            <span>工作目录</span>
+                        </div>
+                        <div class="config-value" id="config-rootPath">未配置</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">🌐</span>
+                            <span>连接地址</span>
+                        </div>
+                        <div class="config-value" id="config-hostPort">未配置</div>
+                    </div>
+                </div>
 
                 <script>
                     (function() {
@@ -639,7 +777,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             loggedIn: ${this._isLoggedIn},
                             initialized: ${this._isInitialized},
                             customCommands: ${JSON.stringify(this._customCommands)},
-                            customEvals: ${JSON.stringify(this._customEvals)}
+                            customEvals: ${JSON.stringify(this._customEvals)},
+                            config: ${JSON.stringify(this.getCurrentConfig())}
                         };
 
                         // 命令映射
@@ -647,7 +786,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             'connect': 'game-server-compiler.connect',
                             'compile': 'game-server-compiler.compileCurrentFile',
                             'compileDir': 'game-server-compiler.compileDir',
-                            'restart': 'game-server-compiler.restart'
+                            'restart': 'game-server-compiler.restart',
+                            'resetProjectPath': 'game-server-compiler.resetProjectPath'
                         };
 
                         // 绑定基础按钮事件
@@ -774,14 +914,17 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     if (id === 'connect') {
                                         // 连接按钮的处理
                                         button.disabled = !state.initialized;
-                                        button.className = state.initialized ? 
-                                            (state.connected ? 'connected' : '') : 
+                                        button.className = state.initialized ?
+                                            (state.connected ? 'connected' : '') :
                                             'button-disabled';
                                         // 更新连接按钮的文字
                                         const textSpan = button.querySelector('span:last-child');
                                         if (textSpan) {
                                             textSpan.textContent = state.connected ? '断开服务器' : '连接游戏服务器';
                                         }
+                                    } else if (id === 'resetProjectPath') {
+                                        // 🚀 "重置项目路径"按钮始终可用
+                                        button.disabled = false;
                                     } else {
                                         // 其他按钮的处理
                                         button.disabled = !state.initialized || !state.connected || !state.loggedIn;
@@ -796,6 +939,36 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     button.disabled = !state.initialized || !state.connected || !state.loggedIn;
                                 }
                             });
+
+                            // 🚀 更新配置显示
+                            updateConfigDisplay();
+                        }
+
+                        // 更新配置显示
+                        function updateConfigDisplay() {
+                            const rootPathEl = document.getElementById('config-rootPath');
+                            const hostPortEl = document.getElementById('config-hostPort');
+
+                            if (rootPathEl) {
+                                if (state.config && state.config.rootPath) {
+                                    rootPathEl.textContent = state.config.rootPath;
+                                    rootPathEl.classList.remove('empty');
+                                } else {
+                                    rootPathEl.textContent = '未配置';
+                                    rootPathEl.classList.add('empty');
+                                }
+                            }
+
+                            if (hostPortEl) {
+                                if (state.config && state.config.host && state.config.port) {
+                                    // 🚀 修复：直接拼接变量，不要用字符串字面量
+                                    hostPortEl.textContent = state.config.host + ':' + state.config.port;
+                                    hostPortEl.classList.remove('empty');
+                                } else {
+                                    hostPortEl.textContent = '未配置';
+                                    hostPortEl.classList.add('empty');
+                                }
+                            }
                         }
 
                         // 初始化时更新按钮状态

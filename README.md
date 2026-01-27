@@ -71,6 +71,21 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 
 ---
 
+## 📚 文档
+
+深入了解项目的技术细节和开发指南：
+
+| 文档 | 描述 |
+|------|------|
+| [🏗️ 架构文档](ARCHITECTURE.md) | 项目整体架构设计和技术栈说明 |
+| [🔌 API文档](API.md) | 完整的API接口文档和使用说明 |
+| [💻 开发指南](DEVELOPMENT.md) | 开发环境搭建、调试和贡献指南 |
+| [⚙️ 配置文档](CONFIGURATION.md) | 详细的配置选项和参数说明 |
+| [🧩 模块设计](MODULES.md) | 各功能模块的详细设计文档 |
+| [🧪 测试文档](TESTING.md) | 测试策略和测试用例说明 |
+
+---
+
 ## 🚀 快速开始
 
 ### 1️⃣ 安装
@@ -139,6 +154,20 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 📝 建议将 `muy-lpc-update.json` 添加到 `.gitignore`
 - 🔑 定期更改密码和验证密钥
 - 🛡️ 确保服务器端口的安全性
+
+---
+
+## 🤝 贡献指南
+
+欢迎贡献代码、报告问题或提出改进建议！
+
+1. Fork 本项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 提交 Pull Request
+
+详细的开发指南请参考：[💻 开发指南](DEVELOPMENT.md)
 
 ---
 

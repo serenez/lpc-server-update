@@ -61,31 +61,50 @@ export class ConnectionManager {
     });
   }
 
+  /**
+   * 🚀 优化：添加随机抖动的重连机制
+   * 避免雷群效应（多个客户端同时重连）
+   */
   private startReconnect(): void {
     if (this.reconnectTimer || this.reconnectAttempts >= this.maxReconnectAttempts) {
       return;
     }
 
-    const delay = Math.min(
+    // 计算基础延迟（指数退避）
+    const baseDelay = Math.min(
       this.initialReconnectDelay * Math.pow(2, this.reconnectAttempts),
       this.maxReconnectDelay
     );
 
+    // 🚀 优化：添加±25%的随机抖动
+    const jitter = baseDelay * 0.25; // 25%的抖动范围
+    const randomJitter = (Math.random() * 2 - 1) * jitter; // -jitter 到 +jitter
+    const finalDelay = Math.floor(baseDelay + randomJitter);
+
+    this.logger.log(`重连延迟: ${finalDelay}ms (基础: ${baseDelay}ms, 抖动: ${Math.round(randomJitter)}ms)`, LogLevel.DEBUG);
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectAttempts++;
       this.tryReconnect();
-    }, delay);
+    }, finalDelay);
   }
 
+  /**
+   * 🚀 优化：改进错误处理和日志
+   */
   private async tryReconnect(): Promise<void> {
     try {
       const config = this.config.getConfig();
       await this.connect(config.host, config.port);
       this.stopReconnect();
+      this.logger.log(`重连成功（第${this.reconnectAttempts}次尝试）`, LogLevel.INFO);
     } catch (error) {
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         this.stopReconnect();
-        this.logger.log('重连失败', LogLevel.ERROR);
+        this.logger.log(`重连失败，已达到最大尝试次数（${this.maxReconnectAttempts}）`, LogLevel.ERROR);
+        this.logger.log(`最后错误: ${error instanceof Error ? error.message : String(error)}`, LogLevel.ERROR);
+      } else {
+        this.logger.log(`重连失败（第${this.reconnectAttempts}次尝试），${this.maxReconnectAttempts - this.reconnectAttempts}次剩余`, LogLevel.WARN);
       }
     }
   }

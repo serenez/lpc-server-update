@@ -123,26 +123,29 @@ async function checkAndUpdateUserConfig(): Promise<boolean> {
 }
 
 async function checkAndUpdateConfig(): Promise<boolean> {
+    // 🚀 优化：延迟创建配置文件，在连接时才创建
+    await configManager.ensureConfigExists();
+
     const config = configManager.getConfig();
-    
+
     // 检查是否需要配置
     const needsServerConfig = !config.host || !config.port;
     const needsUserConfig = !config.username || !config.password;
     const needsLoginWithEmail = config.loginWithEmail === undefined;
-    
+
     // 如果配置完整，直接返回
     if (!needsServerConfig && !needsUserConfig && !needsLoginWithEmail) {
         messageProvider?.addMessage('配置已完整，无需更新');
         return true;
     }
-    
+
     // 需要服务器配置时才检查
     if (needsServerConfig) {
         if (!await checkAndUpdateServerConfig()) {
             return false;
         }
     }
-    
+
     // 需要用户配置时才检查
     if (needsUserConfig) {
         if (!await checkAndUpdateUserConfig()) {
@@ -155,7 +158,7 @@ async function checkAndUpdateConfig(): Promise<boolean> {
         const choice = await vscode.window.showQuickPick(['是', '否'], {
             placeHolder: '是否在登录信息中包含邮箱?'
         });
-        
+
         if (choice === undefined) {
             return false;
         }
@@ -271,7 +274,7 @@ export async function activate(context: vscode.ExtensionContext) {
             } catch (error) {
                 outputChannel.appendLine(`连接错误: ${error}`);
                 const errorMsg = `${error}`;
-                messageProvider?.addMessage(errorMsg);
+                // 🚀 移除重复的 addMessage，TcpClient.log() 已经添加了消息
                 vscode.window.showErrorMessage(errorMsg);
                 await vscode.commands.executeCommand('setContext', 'gameServerCompiler.isLoggedIn', false);
             }
@@ -462,6 +465,69 @@ export async function activate(context: vscode.ExtensionContext) {
                     vscode.window.showErrorMessage(`发送重启命令失败: ${error}`);
                 }
             }
+        },
+        'game-server-compiler.showPerformanceReport': async () => {
+            outputChannel.appendLine('==== 显示性能报告 ====');
+            try {
+                // 获取性能报告
+                const report = tcpClient.getPerformanceReport();
+
+                // 创建并显示性能报告的 OutputChannel
+                const perfChannel = vscode.window.createOutputChannel('LPC性能监控报告');
+                perfChannel.appendLine(report);
+                perfChannel.show();
+
+                // 检查性能问题
+                const issues = tcpClient.checkPerformanceIssues();
+                if (issues.length > 0) {
+                    messageProvider?.addMessage('⚠️ 发现性能问题:\n' + issues.join('\n'));
+                } else {
+                    messageProvider?.addMessage('✅ 未发现明显性能问题');
+                }
+            } catch (error) {
+                outputChannel.appendLine(`获取性能报告失败: ${error}`);
+                messageProvider?.addMessage(`获取性能报告失败: ${error}`);
+                vscode.window.showErrorMessage(`获取性能报告失败: ${error}`);
+            }
+        },
+        'game-server-compiler.resetPerformanceMetrics': async () => {
+            outputChannel.appendLine('==== 重置性能指标 ====');
+            try {
+                const confirm = await vscode.window.showWarningMessage(
+                    '确定要重置所有性能指标吗？',
+                    '确定',
+                    '取消'
+                );
+
+                if (confirm === '确定') {
+                    tcpClient.resetPerformanceMetrics();
+                    messageProvider?.addMessage('✅ 性能指标已重置');
+                    vscode.window.showInformationMessage('性能指标已重置');
+                }
+            } catch (error) {
+                outputChannel.appendLine(`重置性能指标失败: ${error}`);
+                messageProvider?.addMessage(`重置性能指标失败: ${error}`);
+                vscode.window.showErrorMessage(`重置性能指标失败: ${error}`);
+            }
+        },
+        'game-server-compiler.resetProjectPath': async () => {
+            outputChannel.appendLine('==== 重置项目路径 ====');
+            try {
+                const confirm = await vscode.window.showWarningMessage(
+                    '确定要重置项目路径吗？这将更新配置文件中的项目目录路径。',
+                    '确定',
+                    '取消'
+                );
+
+                if (confirm === '确定') {
+                    await configManager.resetRootPath();
+                    messageProvider?.addMessage('✅ 项目路径已重置');
+                }
+            } catch (error) {
+                outputChannel.appendLine(`重置项目路径失败: ${error}`);
+                messageProvider?.addMessage(`重置项目路径失败: ${error}`);
+                vscode.window.showErrorMessage(`重置项目路径失败: ${error}`);
+            }
         }
     };
 
@@ -475,34 +541,33 @@ export async function activate(context: vscode.ExtensionContext) {
     // 注册文件保存监听
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
+            // 🚀 优先检查文件类型，不是.c或.lpc文件直接返回，不输出任何日志
+            if (!isCompilableFile(document.fileName)) {
+                return;
+            }
+
             const config = configManager.getConfig();
-            
-            // 添加调试日志
+
+            // 添加调试日志（只对可编译文件输出）
             outputChannel.appendLine('==== 执行编译当前文件命令 ====');
             outputChannel.appendLine(`原始文件路径: ${document.fileName}`);
-            
+
             // 首先检查登录状态
             if (!tcpClient.isLoggedIn()) {
                 outputChannel.appendLine('角色未登录,跳过编译');
                 return;
             }
-            
+
             // 然后检查连接状态
             if (!tcpClient.isConnected()) {
                 outputChannel.appendLine('服务器未连接,跳过编译');
                 return;
             }
-            
+
             // 最后检查自动编译设置
             outputChannel.appendLine(`自动编译设置: ${config.compile.autoCompileOnSave}`);
             if (!config.compile.autoCompileOnSave) {
                 outputChannel.appendLine('自动编译未开启,跳过编译');
-                return;
-            }
-            
-            // 检查文件类型
-            if (!isCompilableFile(document.fileName)) {
-                outputChannel.appendLine('不是可编译的文件类型，跳过编译');
                 return;
             }
             

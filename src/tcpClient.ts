@@ -172,6 +172,11 @@ export class TcpClient implements IDisposable {
                     
                     for (let message of messages) {
                         if (message) {
+                            const rawMode = this.messageProvider?.shouldShowRawServerData?.() === true;
+                            if (rawMode) {
+                                this.outputChannel.appendLine(`[RAW] ${message}`);
+                            }
+                            this.messageProvider?.addRawServerMessage?.(message);
                             if (message.startsWith(`${this.ESC}[2;37;0m`)) {
                                 message = message.replace(`${this.ESC}[2;37;0m`, '');
                             }
@@ -325,6 +330,7 @@ export class TcpClient implements IDisposable {
                 // 立即显示错误信息
                 const errorMsg = `❌ 编译错误:\n文件: ${filePath}\n行号: ${this.errorLine}\n错误: ${errorMessage}`;
                 this.messageProvider?.addMessage(errorMsg);
+                this.log(`编译失败: ${filePath}:${this.errorLine} ${errorMessage}`, LogLevel.ERROR);
                 
                 // 在编辑器中显示错误
                 this.showCompileError(filePath, this.errorLine, errorMessage);
@@ -341,6 +347,7 @@ export class TcpClient implements IDisposable {
                 
                 // 显示成功消息
                 this.messageProvider?.addMessage('✅ 编译成功');
+                this.log('编译成功', LogLevel.INFO);
                 return;
             }
 
@@ -446,8 +453,9 @@ export class TcpClient implements IDisposable {
                 this.disconnect();
             } else if (cleanedMessage.trim()) {
                 this.appendToGameLog(cleanedMessage);
-                
-                if (this.messageProvider) {
+
+                const rawMode = this.messageProvider?.shouldShowRawServerData?.() === true;
+                if (this.messageProvider && !rawMode) {
                     this.messageProvider.addMessage(cleanedMessage, true);
                 }
             }
@@ -479,27 +487,12 @@ export class TcpClient implements IDisposable {
                 }
                 if (cleanedContent.includes('密码错误') || cleanedContent.includes('账号不存在')) {
                     this.log(cleanedContent, LogLevel.ERROR, false);
-                    this.outputChannel.appendLine(`❌ ${cleanedContent}`);
                     this.disconnect();
                 } else if (cleanedContent.includes('更新中') || cleanedContent.includes('维护中')) {
                     this.log(cleanedContent, LogLevel.INFO, false);
-                    this.outputChannel.appendLine(`🔧 ${cleanedContent}`);
                     this.disconnect();
                 } else {
                     this.log(cleanedContent, LogLevel.INFO);
-                    let icon = '';
-                    if (cleanedContent.includes('成功')) {
-                        icon = '✅ ';
-                    } else if (cleanedContent.includes('失败') || cleanedContent.includes('错误')) {
-                        icon = '❌ ';
-                    } else if (cleanedContent.includes('警告') || cleanedContent.includes('注意')) {
-                        icon = '⚠️ ';
-                    } else if (cleanedContent.includes('系统消息:')) {
-                        icon = '🔧 ';
-                    } else if (cleanedContent.includes('断开连接')) {
-                        icon = '🔌 ';
-                    }
-                    this.outputChannel.appendLine(`${icon}${cleanedContent}`);
                 }
                 break;
         }
@@ -547,8 +540,22 @@ export class TcpClient implements IDisposable {
     private log(message: string, level: LogLevel = LogLevel.INFO, showNotification: boolean = false) {
         if (message.trim()) {
             const cleanMessage = this.cleanAnsiCodes(message);
-            let prefix = level === LogLevel.ERROR ? '[错误]' : level === LogLevel.DEBUG ? '[调试]' : '[信息]';
-            this.outputChannel.appendLine(`${prefix} ${cleanMessage}`);
+            if (level !== LogLevel.DEBUG) {
+                const importantInfo =
+                    cleanMessage.includes('连接') ||
+                    cleanMessage.includes('登录') ||
+                    cleanMessage.includes('验证') ||
+                    cleanMessage.includes('断开') ||
+                    cleanMessage.includes('重连') ||
+                    cleanMessage.includes('失败') ||
+                    cleanMessage.includes('错误') ||
+                    cleanMessage.includes('超时');
+
+                if (level === LogLevel.ERROR || importantInfo) {
+                    const prefix = level === LogLevel.ERROR ? '[错误]' : '[信息]';
+                    this.outputChannel.appendLine(`${prefix} ${cleanMessage}`);
+                }
+            }
 
             let icon = '';
             let content = '';
@@ -963,10 +970,7 @@ export class TcpClient implements IDisposable {
     }
 
     private checkCommandStatus(commandName: string, command: string | number) {
-        this.log('==== 命令发送状态检查 ====', LogLevel.INFO);
-        this.log(`命令: ${commandName} (${command})`, LogLevel.INFO);
-        this.log(`连接状态: ${this.connected}`, LogLevel.INFO);
-        this.log(`登录状态: ${this.loggedIn}`, LogLevel.INFO);
+        this.log(`命令状态: ${commandName} (${command}), connected=${this.connected}, loggedIn=${this.loggedIn}`, LogLevel.DEBUG);
     }
 
     private handleStatusChange(status: 'connected' | 'disconnected' | 'loggedIn', message: string) {
@@ -1013,13 +1017,8 @@ export class TcpClient implements IDisposable {
 
     private appendToGameLog(message: string) {
         if (message.trim()) {
-            const utf8Message = this.ensureUTF8(message);
-            
-            this.outputChannel.appendLine('================================');
-            this.outputChannel.appendLine(`游戏消息: ${utf8Message}`);
-            this.outputChannel.appendLine(`消息长度: ${utf8Message.length}`);
-            this.outputChannel.appendLine(`接收时间: ${new Date().toISOString()}`);
-            this.outputChannel.appendLine('消息分析:');
+            // 保留入口用于后续诊断扩展；默认不写入Output，避免噪声
+            this.ensureUTF8(message);
         }
     }
 
@@ -1053,10 +1052,7 @@ export class TcpClient implements IDisposable {
     }
 
     private handleConnectionError(error: Error) {
-        this.log('==== 处理连接错误 ====', LogLevel.ERROR);
-        this.log(`错误类型: ${error.name}`, LogLevel.ERROR);
         this.log(`错误信息: ${error.message}`, LogLevel.ERROR);
-        this.log(`错误堆栈: ${error.stack}`, LogLevel.ERROR);
         
         if (error.message.includes('ECONNREFUSED')) {
             this.log('服务器拒绝连接，请检查服务器地址和端口是否正确', LogLevel.ERROR, false);

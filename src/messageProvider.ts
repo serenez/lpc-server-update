@@ -26,6 +26,29 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         this._extensionUri = uri;
     }
 
+    public shouldShowRawServerData(): boolean {
+        return vscode.workspace
+            .getConfiguration('gameServerCompiler')
+            .get<boolean>('messages.showRawData', false);
+    }
+
+    private async handleRawServerDataToggle(currentRawServerData: boolean) {
+        try {
+            const newValue = !currentRawServerData;
+            await vscode.workspace
+                .getConfiguration('gameServerCompiler')
+                .update('messages.showRawData', newValue, vscode.ConfigurationTarget.Workspace);
+
+            this._view?.webview.postMessage({
+                type: 'updateRawServerData',
+                rawServerData: newValue
+            });
+            this.addMessage(`原始数据显示已${newValue ? '开启' : '关闭'}`);
+        } catch (error) {
+            vscode.window.showErrorMessage('更新原始数据显示设置失败: ' + error);
+        }
+    }
+
     private async handleEncodingChange(currentEncoding: string) {
         try {
             // 🚀 使用ConfigManager获取和更新配置
@@ -140,6 +163,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         let currentEncoding = 'UTF8';
         let loginWithEmail = false;
         let configLoadStatus = '未加载';
+        const rawServerData = this.shouldShowRawServerData();
         
         try {
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
@@ -170,7 +194,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             this.addMessage(`配置文件读取失败: ${error}`);
         }
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, currentEncoding, loginWithEmail, configLoadStatus);
+        webviewView.webview.html = this._getHtmlForWebview(
+            webviewView.webview,
+            currentEncoding,
+            loginWithEmail,
+            configLoadStatus,
+            rawServerData
+        );
 
         // 处理来自webview的消息
         webviewView.webview.onDidReceiveMessage(async message => {
@@ -187,6 +217,9 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'openSettings':
                     this.handleOpenSettings();
+                    break;
+                case 'toggleRawServerData':
+                    this.handleRawServerDataToggle(message.currentRawServerData);
                     break;
                 case 'openFile':
                     try {
@@ -218,7 +251,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview, currentEncoding: string, loginWithEmail: boolean, configLoadStatus: string) {
+    private _getHtmlForWebview(
+        webview: vscode.Webview,
+        currentEncoding: string,
+        loginWithEmail: boolean,
+        configLoadStatus: string,
+        rawServerData: boolean
+    ) {
         const config = vscode.workspace.getConfiguration('gameServerCompiler');
         const colors = config.get<any>('messages.colors', {
             success: '#4CAF50',
@@ -553,6 +592,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 background: rgba(255, 255, 255, 0.3);
             }
 
+            .message.raw-server-message .message-content {
+                font-family: Consolas, 'Courier New', monospace;
+                white-space: pre-wrap;
+                word-break: break-all;
+                letter-spacing: 0;
+            }
+
             /* 配置按钮 */
             .config-button {
                 height: 26px;
@@ -735,6 +781,9 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <button class="config-button ${loginWithEmail ? 'with-email' : 'without-email'}" id="loginEmailButton" title="登录邮箱状态">
                         登录:${loginWithEmail ? '含邮箱' : '不含'}
                     </button>
+                    <button class="config-button ${rawServerData ? 'with-email' : 'without-email'}" id="rawDataButton" title="服务器原始数据显示开关">
+                        原始:${rawServerData ? '开' : '关'}
+                    </button>
                 </div>
                 <div class="floating-buttons">
                     <button class="icon-button lock active" id="scrollLockButton" title="自动滚动已开启">
@@ -753,12 +802,14 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         const scrollLockButton = document.getElementById('scrollLockButton');
                         const clearButton = document.getElementById('clearButton');
                         const settingsButton = document.getElementById('settingsButton');
+                        const rawDataButton = document.getElementById('rawDataButton');
                         
                         const config = {
                             autoScroll: ${config.get<boolean>('messages.autoScroll', true)},
                             maxCount: ${config.get<number>('messages.maxCount', 1000)},
                             encoding: "${currentEncoding}",
-                            loginWithEmail: ${loginWithEmail}
+                            loginWithEmail: ${loginWithEmail},
+                            rawServerData: ${rawServerData}
                         };
                         
                         let autoScroll = config.autoScroll;
@@ -773,6 +824,11 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                                 loginEmailButton.textContent = "登录:" + (config.loginWithEmail ? '含邮箱' : '不含邮箱');
                                 loginEmailButton.className = 'config-button ' + 
                                     (config.loginWithEmail ? 'with-email' : 'without-email');
+                            }
+                            if (rawDataButton) {
+                                rawDataButton.textContent = "原始:" + (config.rawServerData ? '开' : '关');
+                                rawDataButton.className = 'config-button ' +
+                                    (config.rawServerData ? 'with-email' : 'without-email');
                             }
                             if (scrollLockButton) {
                                 scrollLockButton.textContent = autoScroll ? '🔒' : '🔓';
@@ -810,6 +866,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                                 command: 'openSettings'
                             });
                         });
+
+                        rawDataButton?.addEventListener('click', () => {
+                            vscode.postMessage({
+                                command: 'toggleRawServerData',
+                                currentRawServerData: config.rawServerData
+                            });
+                        });
                         
                         function scrollToBottom() {
                             messageContainer.scrollTop = messageContainer.scrollHeight;
@@ -841,6 +904,10 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                                     break;
                                 case 'updateLoginEmail':
                                     config.loginWithEmail = message.loginWithEmail;
+                                    updateButtons();
+                                    break;
+                                case 'updateRawServerData':
+                                    config.rawServerData = message.rawServerData;
                                     updateButtons();
                                     break;
                                 case 'addMessage':
@@ -1325,6 +1392,56 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             this._messages.push(messageHtml);
             this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
         }
+    }
+
+    public addRawServerMessage(message: string) {
+        if (!this.shouldShowRawServerData()) {
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const timeFormat = config.get<string>('messages.timeFormat', 'HH:mm:ss');
+        const maxCount = config.get<number>('messages.maxCount', 1000);
+
+        if (this._messages.length >= maxCount) {
+            this._messages = this._messages.slice(-maxCount + 1);
+        }
+
+        const now = new Date();
+        let timestamp = '';
+
+        switch (timeFormat) {
+            case 'HH:mm':
+                timestamp = now.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                break;
+            case 'hh:mm:ss a':
+                timestamp = now.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                break;
+            case 'YYYY-MM-DD HH:mm:ss':
+                timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('zh-CN')}`;
+                break;
+            default:
+                timestamp = now.toLocaleTimeString('zh-CN');
+                break;
+        }
+
+        const messageHtml = `<div class="message server-message raw-server-message">
+            <div class="message-header">
+                <span class="timestamp">[${timestamp}]</span>
+            </div>
+            <div class="message-content">${this.escapeHtml(message)}</div>
+        </div>`;
+
+        this._messages.push(messageHtml);
+        this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
     }
 
     public dispose() {

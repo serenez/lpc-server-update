@@ -96,6 +96,11 @@
           "default": true,
           "description": "自动滚动到最新消息"
         },
+        "gameServerCompiler.messages.showRawData": {
+          "type": "boolean",
+          "default": false,
+          "description": "显示服务器原始数据（不做格式化）"
+        },
         "gameServerCompiler.messages.colors": {
           "type": "object",
           "default": {

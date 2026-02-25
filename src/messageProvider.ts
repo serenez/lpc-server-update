@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ConfigManager } from './config/ConfigManager';
+import { updateSettingWithFallback, type UpdateTarget } from './utils/configUpdateFallback';
 
 interface Config {
     rootPath: string;
@@ -35,15 +36,26 @@ export class MessageProvider implements vscode.WebviewViewProvider {
     private async handleRawServerDataToggle(currentRawServerData: boolean) {
         try {
             const newValue = !currentRawServerData;
-            await vscode.workspace
-                .getConfiguration('gameServerCompiler')
-                .update('messages.showRawData', newValue, vscode.ConfigurationTarget.Workspace);
+            const target = await updateSettingWithFallback(
+                {
+                    async update(fullKey: string, value: unknown, updateTarget: UpdateTarget) {
+                        const configTarget =
+                            updateTarget === 'workspace'
+                                ? vscode.ConfigurationTarget.Workspace
+                                : vscode.ConfigurationTarget.Global;
+                        await vscode.workspace.getConfiguration().update(fullKey, value, configTarget);
+                    }
+                },
+                'gameServerCompiler.messages.showRawData',
+                newValue
+            );
 
             this._view?.webview.postMessage({
                 type: 'updateRawServerData',
                 rawServerData: newValue
             });
-            this.addMessage(`原始数据显示已${newValue ? '开启' : '关闭'}`);
+            const targetLabel = target === 'workspace' ? '工作区' : '用户';
+            this.addMessage(`原始数据显示已${newValue ? '开启' : '关闭'}（${targetLabel}设置）`);
         } catch (error) {
             vscode.window.showErrorMessage('更新原始数据显示设置失败: ' + error);
         }

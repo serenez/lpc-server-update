@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
@@ -10,7 +10,7 @@
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
-[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.0 - 多配置环境支持**
+[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.1 - 多配置与调试增强**
 
 </div>
 
@@ -147,6 +147,8 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 🔄 **一键切换**：点击"切换"按钮即可切换配置，自动断开当前连接
 - 📝 **自定义配置名称**：可给每个配置设置易识别的名称
 - 🔄 **自动迁移**：旧版本配置会自动迁移到新格式
+- 🧭 **自动识别项目根目录**：优先按 `log/adm/cmds/feature/include/std/inherit` 目录特征识别根目录（命中 >=3）
+- ℹ️ **rootPath 兜底**：`rootPath` 仅作为自动识别失败时的备用路径
 
 <details>
 <summary><b>📖 旧版本格式（V1）自动迁移</b></summary>
@@ -184,6 +186,15 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 2. 点击 "连接游戏服务器"
 3. 开始编码！
 
+### 🔥 最新改进（1.3.1）
+
+- 📋 **复制当前文件相对路径**：一键复制 `/adm/daemons/logind` 这种 MUD 相对路径（不带后缀、不带项目根目录）
+- ⭐ **常用文件快捷打开**：可把常用文件加入列表（如 `include/ansi.h`），点击即打开
+- 🧪 **原始数据模式**：消息面板支持 `原始:开/关`，开启后可直接查看服务器原始数据
+- 🧹 **输出精简**：默认仅保留关键状态日志（连接/验证/登录/编译结果/错误），减少调试噪音
+- ✅ **编译结果强化**：显式输出编译成功与编译失败摘要，排查更直接
+- ♻️ **移除重置项目路径入口**：路径解析改为自动识别为主，避免手工维护路径
+
 ---
 
 ## 🛠️ 功能特性
@@ -212,12 +223,14 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 支持 Eval 命令
 - 服务器重启管理
 - 实时执行反馈
+- 复制当前文件 MUD 相对路径
 
 ### 📊 消息系统
 - 分类消息显示
 - 自动滚动/锁定
 - 支持消息清理
 - 自定义消息样式
+- 原始数据开关（服务器发来什么就显示什么）
 
 ---
 
@@ -277,7 +290,8 @@ A: 插件会自动迁移到新格式，无需手动修改
 1. 检查文件路径
 2. 查看错误信息
 3. 确认编码设置
-4. 确认当前配置环境的项目路径
+4. 确认文件位于项目目录中（插件会自动识别项目根目录）
+5. 若自动识别失败，再检查配置中的 `rootPath` 兜底项
 </details>
 
 <details>

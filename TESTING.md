@@ -1,5 +1,8 @@
 # LPC-Server-UPDATE 测试文档
 
+> 维护说明（2026-02-25）：
+> 测试基线已切换为 `extension.ts` 直连架构，本文内涉及 `CompileManager/ConnectionManager/CommandManager` 的示例属于历史参考。
+
 ## 文档概述
 
 本文档说明LPC-Server-UPDATE VS Code扩展的测试策略、测试框架设置、测试用例编写规范以及CI/CD集成方法。

@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import * as assert from 'node:assert/strict';
+import { normalizeConfigToV2 } from '../config/configNormalizer';
+
+test('normalizeConfigToV2 keeps v2-like config without version', () => {
+    const input = {
+        activeProfile: 'default',
+        profiles: {
+            default: {
+                host: '127.0.0.1',
+                port: 8888,
+                rootPath: 'C:/mud',
+                serverKey: 'k1',
+                encoding: 'UTF8',
+                loginKey: 'k2'
+            }
+        }
+    };
+
+    const result = normalizeConfigToV2(input);
+    assert.equal(result.config.version, 2);
+    assert.equal(result.config.activeProfile, 'default');
+    assert.equal(result.config.profiles.default.host, '127.0.0.1');
+});
+
+test('normalizeConfigToV2 unwraps wrongly nested migrated config', () => {
+    const input = {
+        version: 2,
+        activeProfile: 'default',
+        profiles: {
+            default: {
+                version: 2,
+                activeProfile: 'prod',
+                profiles: {
+                    prod: {
+                        host: 'localhost',
+                        port: 7777,
+                        rootPath: 'C:/mud',
+                        serverKey: 's1',
+                        encoding: 'UTF8',
+                        loginKey: 'l1'
+                    }
+                }
+            }
+        }
+    };
+
+    const result = normalizeConfigToV2(input);
+    assert.equal(result.config.activeProfile, 'prod');
+    assert.equal(result.config.profiles.prod.host, 'localhost');
+});

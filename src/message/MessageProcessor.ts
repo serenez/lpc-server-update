@@ -58,9 +58,9 @@ export class MessageProcessor {
   }
 
   private getMessageType(message: string): MessageType {
-    if (message.includes('编译')) return MessageType.COMPILE;
-    if (message.includes('错误')) return MessageType.ERROR;
-    if (message.startsWith('系统')) return MessageType.SYSTEM;
+    if (message.includes('编译')) {return MessageType.COMPILE;}
+    if (message.includes('错误')) {return MessageType.ERROR;}
+    if (message.startsWith('系统')) {return MessageType.SYSTEM;}
     return MessageType.GAME;
   }
 

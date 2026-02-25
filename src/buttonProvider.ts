@@ -43,7 +43,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private loadCustomCommands() {
         try {
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) return;
+            if (!workspaceRoot) {return;}
 
             const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
             if (fs.existsSync(configPath)) {
@@ -62,7 +62,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private async saveCustomCommands() {
         try {
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) return;
+            if (!workspaceRoot) {return;}
 
             const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
             if (fs.existsSync(configPath)) {
@@ -94,13 +94,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             prompt: `输入${isEval ? 'Eval命令' : '自定义命令'}名称`,
             placeHolder: '例如: 查看在线玩家'
         });
-        if (!name) return;
+        if (!name) {return;}
 
         const command = await vscode.window.showInputBox({
             prompt: `输入${isEval ? 'Eval命令' : '自定义命令'}内容`,
             placeHolder: isEval ? 'memory_info()' : 'users'
         });
-        if (!command) return;
+        if (!command) {return;}
 
         this._outputChannel.appendLine(`==== 添加${isEval ? 'Eval' : '自定义'}命令 ====`);
         this._outputChannel.appendLine(`命令名称: ${name}`);
@@ -175,21 +175,21 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         const commands = isEval ? this._customEvals : this._customCommands;
         const command = commands[index];
 
-        if (!command) return;
+        if (!command) {return;}
 
         const name = await vscode.window.showInputBox({
             prompt: `修改${isEval ? 'Eval命令' : '自定义命令'}名称`,
             value: command.name,
             placeHolder: '例如: 查看在线玩家'
         });
-        if (!name) return;
+        if (!name) {return;}
 
         const commandStr = await vscode.window.showInputBox({
             prompt: `修改${isEval ? 'Eval命令' : '自定义命令'}内容`,
             value: command.command,
             placeHolder: isEval ? 'memory_info()' : 'users'
         });
-        if (!commandStr) return;
+        if (!commandStr) {return;}
 
         commands[index] = { name, command: commandStr };
         await this.saveCustomCommands();

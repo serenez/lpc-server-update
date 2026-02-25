@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { EventEmitter } from 'events';
 import { LogManager, LogLevel } from '../log/LogManager';
+import { normalizeConfigToV2 } from './configNormalizer';
 
 // 🚀 Profile接口 - 单个配置环境的完整定义
 export interface Profile {
@@ -223,36 +224,18 @@ export class ConfigManager {
      * 🚀 从版本1迁移配置到版本2
      */
     private migrateFromV1(oldConfig: any): ConfigV2 {
-        // 检测是否已经是版本2
-        if (oldConfig.version && oldConfig.version >= 2 && oldConfig.profiles) {
-            return oldConfig as ConfigV2;
-        }
-
         const logger = LogManager.getInstance();
-        logger.log('检测到旧版本配置文件，开始迁移到版本2', LogLevel.INFO);
+        const normalized = normalizeConfigToV2(oldConfig);
+        const migratedConfig = normalized.config as ConfigV2;
 
-        // 迁移为版本2格式
-        const migratedConfig: ConfigV2 = {
-            version: 2,
-            activeProfile: 'default',
-            profiles: {
-                default: { ...oldConfig }
+        if (normalized.migrated) {
+            logger.log('检测到旧版或异常配置结构，已自动转换为版本2格式', LogLevel.INFO);
+            try {
+                fs.writeFileSync(this.configPath, JSON.stringify(migratedConfig, null, 2), 'utf8');
+                logger.log('配置文件已更新为版本2格式', LogLevel.INFO);
+            } catch (error) {
+                logger.log(`保存迁移配置失败: ${error}`, LogLevel.ERROR);
             }
-        };
-
-        // 确保必要字段存在
-        if (!migratedConfig.profiles.default.name) {
-            migratedConfig.profiles.default.name = '默认配置';
-        }
-
-        logger.log('配置迁移完成', LogLevel.INFO);
-
-        // 🚀 立即保存迁移后的配置
-        try {
-            fs.writeFileSync(this.configPath, JSON.stringify(migratedConfig, null, 2), 'utf8');
-            logger.log('配置文件已更新为版本2格式', LogLevel.INFO);
-        } catch (error) {
-            logger.log(`保存迁移配置失败: ${error}`, LogLevel.ERROR);
         }
 
         return migratedConfig;
@@ -418,30 +401,24 @@ export class ConfigManager {
             const configData = fs.readFileSync(this.configPath, 'utf8');
             const config = JSON.parse(configData);
 
-            // 🚀 验证必要的配置字段（兼容版本1和版本2）
-            const requiredFields = ['rootPath', 'serverKey', 'encoding', 'loginKey'];
+            // 🚀 先归一化，避免 v2-like（缺少version）被误判为v1
+            const normalized = normalizeConfigToV2(config);
+            const normalizedConfig = normalized.config;
 
-            // 如果是版本2格式，验证profiles中的字段
-            if (config.version >= 2 && config.profiles) {
-                const firstProfile = Object.values(config.profiles)[0] as any;
-                if (!firstProfile) {
-                    throw new Error('配置文件中没有有效的配置');
-                }
-                const missingFields = requiredFields.filter(field => !firstProfile[field]);
-                if (missingFields.length > 0) {
-                    throw new Error(`配置文件缺少必要字段: ${missingFields.join(', ')}`);
-                }
-            } else {
-                // 版本1格式，直接验证
-                const missingFields = requiredFields.filter(field => !config[field]);
-                if (missingFields.length > 0) {
-                    throw new Error(`配置文件缺少必要字段: ${missingFields.join(', ')}`);
-                }
+            // 🚀 验证必要的配置字段
+            const requiredFields = ['serverKey', 'encoding', 'loginKey'];
+            const active = normalizedConfig.profiles[normalizedConfig.activeProfile];
+            if (!active) {
+                throw new Error('配置文件中没有有效的配置');
+            }
+            const missingFields = requiredFields.filter(field => !(active as any)[field]);
+            if (missingFields.length > 0) {
+                throw new Error(`配置文件缺少必要字段: ${missingFields.join(', ')}`);
             }
 
             // 只在第一次显示日志
             if (!ConfigManager.hasShownInitialLog) {
-                this.logInitialConfig(config);
+                this.logInitialConfig(normalizedConfig);
                 ConfigManager.hasShownInitialLog = true;
             }
 

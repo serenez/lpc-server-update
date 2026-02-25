@@ -996,8 +996,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         }
         
         // 布尔值
-        if (value === '1') return true;
-        if (value === '0') return false;
+        if (value === '1') {return true;}
+        if (value === '0') {return false;}
         
         return value;
     }
@@ -1147,7 +1147,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             return `<span class="null">null</span>`;
         }
         if (Array.isArray(value)) {
-            if (value.length === 0) return '<span class="punctuation">({})</span>';
+            if (value.length === 0) {return '<span class="punctuation">({})</span>';}
             
             // 检查是否是对象引用数组
             if (value[0] && typeof value[0] === 'object' && 'path' in value[0]) {
@@ -1164,7 +1164,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         }
         if (typeof value === 'object') {
             const entries = Object.entries(value);
-            if (entries.length === 0) return '<span class="punctuation">{}</span>';
+            if (entries.length === 0) {return '<span class="punctuation">{}</span>';}
             
             const formattedEntries = entries.map(([key, val]) => {
                 const formattedKey = `<span class="key">"${key}"</span>`;

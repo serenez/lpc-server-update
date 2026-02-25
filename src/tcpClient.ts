@@ -129,23 +129,6 @@ export class TcpClient implements IDisposable {
         // 创建诊断集合
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
 
-        // 🚀 修复：文件保存事件处理 - 只清除项目内文件的诊断
-        vscode.workspace.onDidSaveTextDocument(doc => {
-            const config = this.configManager.getConfig();
-            const rootPath = config?.rootPath;
-
-            // 只清除项目内文件的诊断
-            if (rootPath && doc.uri.fsPath.startsWith(rootPath)) {
-                this.clearDiagnosticsForFile(doc.uri.fsPath);
-
-                // 如果保存的是有错误的文件，重置错误状态
-                if (doc.uri.fsPath.includes(this.firstErrorFile)) {
-                    this.firstErrorFile = '';
-                    this.errorLine = 0;
-                    this.errorMessage = '';
-                }
-            }
-        });
     }
 
     private initSocket() {
@@ -239,7 +222,7 @@ export class TcpClient implements IDisposable {
      * 性能提升：~50%
      */
     private cleanColorCodes(text: string): string {
-        if (!text) return text;
+        if (!text) {return text;}
 
         // 🚀 性能监控：开始计时
         const endTimer = this.performanceMonitor.start('cleanColorCodes');
@@ -1615,16 +1598,6 @@ export class TcpClient implements IDisposable {
             });
         } catch (error) {
             this.log(`显示编译错误失败: ${error}`, LogLevel.ERROR);
-        }
-    }
-
-    /**
-     * 🚀 优化：只清除指定文件的诊断信息
-     */
-    private clearDiagnosticsForFile(filePath: string): void {
-        if (this.diagnosticCollection) {
-            const uri = vscode.Uri.file(filePath);
-            this.diagnosticCollection.delete(uri);
         }
     }
 

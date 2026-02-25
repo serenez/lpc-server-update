@@ -79,6 +79,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 
 | 文档 | 描述 |
 |------|------|
+| [✅ 当前运行架构（权威）](CURRENT_RUNTIME.md) | 以当前代码为准的主链路与路径转换规则 |
 | [🏗️ 架构文档](ARCHITECTURE.md) | 项目整体架构设计和技术栈说明 |
 | [🔌 API文档](API.md) | 完整的API接口文档和使用说明 |
 | [💻 开发指南](DEVELOPMENT.md) | 开发环境搭建、调试和贡献指南 |

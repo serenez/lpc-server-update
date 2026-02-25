@@ -1,5 +1,9 @@
 # LPC-Server-UPDATE 架构文档
 
+> 维护说明（2026-02-25）：
+> 当前线上实现采用 `extension.ts` 直连架构（`extension.ts + tcpClient.ts + ConfigManager + providers`）。
+> 文档中涉及 `ServiceLocator`、`CommandManager`、`CompileManager`、`ConnectionManager` 的章节属于历史设计，已不再作为运行时主链路。
+
 ## 项目概述
 
 **项目名称：** LPC-Server-UPDATE

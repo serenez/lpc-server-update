@@ -1,5 +1,9 @@
 # LPC-Server-UPDATE API 文档
 
+> 维护说明（2026-02-25）：
+> 当前有效 API 以 `extension.ts` 直接注册的命令与 `TcpClient`/`ConfigManager` 为准。
+> 本文档中 `ServiceLocator`、`CommandManager`、`CompileManager`、`ConnectionManager` 相关章节为历史内容，仅供兼容参考。
+
 本文档提供了 LPC-Server-UPDATE VS Code 扩展的完整 API 参考。
 
 ## 目录

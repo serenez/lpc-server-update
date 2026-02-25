@@ -84,11 +84,11 @@ export class MessageHandlerImpl implements MessageHandler, IDisposable {
     }
 
     private getMessageType(message: string): MessageType {
-        if (message.startsWith(`${this.ESC}MUY`)) return MessageType.MUY;
-        if (message.match(/^\x1b\d{3}/)) return MessageType.PROTOCOL;
-        if (message.includes('成功编译') || message.includes('编译失败')) return MessageType.COMPILE;
-        if (message.includes('验证失败') || message.includes('登录成功')) return MessageType.AUTH;
-        if (message.includes('错误') || message.includes('失败')) return MessageType.ERROR;
+        if (message.startsWith(`${this.ESC}MUY`)) {return MessageType.MUY;}
+        if (message.match(/^\x1b\d{3}/)) {return MessageType.PROTOCOL;}
+        if (message.includes('成功编译') || message.includes('编译失败')) {return MessageType.COMPILE;}
+        if (message.includes('验证失败') || message.includes('登录成功')) {return MessageType.AUTH;}
+        if (message.includes('错误') || message.includes('失败')) {return MessageType.ERROR;}
         return MessageType.NORMAL;
     }
 

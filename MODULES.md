@@ -1,5 +1,9 @@
 # LPC-Server-UPDATE 模块详细设计文档
 
+> 维护说明（2026-02-25）：
+> 当前运行链路是 `extension.ts` 直连 `TcpClient/ConfigManager/MessageProvider/ButtonProvider`。
+> 文档内 `ConnectionManager`、`CompileManager`、`CommandManager` 等章节属于历史模块设计。
+
 ## 文档概述
 
 本文档详细说明LPC-Server-UPDATE VS Code扩展的各个核心模块的设计，包括模块职责、接口定义、状态机、关键算法以及模块间的交互关系。

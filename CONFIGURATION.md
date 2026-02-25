@@ -772,3 +772,5 @@ const serverKey = process.env.LPC_SERVER_KEY || "buyi-SerenezZmuy";
 **文档版本**: 1.1.10
 **最后更新**: 2024年
 **维护者**: 不一 (BUYI-ZMuy)
+> 说明（2026-02-25）：编译时会优先自动识别项目根目录（命中 `log/adm/cmds/feature/include/std/inherit` 中至少 3 个目录）。
+> `rootPath` 仅作为兜底配置项。

@@ -38,8 +38,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "lint": "eslint src --ext ts",
-    "pretest": "npm run compile"
+    "lint": "eslint . --ignore-pattern dist",
+    "pretest": "npm run compile",
+    "test": "node --test dist/**/*.test.js"
   },
   "engines": {
     "vscode": "^1.60.0"

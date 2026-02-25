@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { TcpClient } from './tcpClient';
 import { MessageProvider } from './messageProvider';
 import { ButtonProvider } from './buttonProvider';
-import * as path from 'path';
 import { LogManager } from './log/LogManager';
 import { ConfigManager } from './config/ConfigManager';
+import { PathConverter } from './utils/PathConverter';
+import { checkCompilePreconditions } from './utils/CompilePreconditions';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
@@ -30,24 +31,26 @@ interface Config {
 }
 
 // 修改路径转换方法
-function convertToMudPath(fullPath: string): string {
+async function convertToMudPath(fullPath: string): Promise<string> {
     const config = configManager.getConfig();
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
     try {
-        // 计算相对路径
-        let relativePath = path.relative(config.rootPath, fullPath);
-        // 将路径分隔符统一为 /
-        relativePath = relativePath.replace(/\\/g, '/');
-        // 如果不是以/开头，添加/
-        if (!relativePath.startsWith('/')) {
-            relativePath = '/' + relativePath;
+        const resolved = PathConverter.resolveMudPathAutoRoot(
+            fullPath,
+            workspaceRoot,
+            config.rootPath
+        );
+
+        if (resolved.usedRootPath !== config.rootPath) {
+            messageProvider?.addMessage(
+                `已使用自动识别根目录: ${resolved.usedRootPath}（rootPath 仅作兜底）`
+            );
         }
-        // 移除文件扩展名
-        relativePath = relativePath.replace(/\.[^/.]+$/, "");
-        // 移除根路径部分
-        relativePath = '/'+relativePath.replace(/^.*?\//, '');
-        return relativePath;
+
+        return resolved.mudPath;
     } catch (error) {
-        throw new Error('路径转换失败');
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}。可尝试执行“重置项目路径”。`);
     }
 }
 
@@ -72,14 +75,14 @@ async function checkAndUpdateServerConfig(): Promise<boolean> {
         placeHolder: 'localhost',
         value: config.host || 'localhost'
     });
-    if (!host) return false;
+    if (!host) {return false;}
 
     const portStr = await vscode.window.showInputBox({
         prompt: '请输入服务器端口',
         placeHolder: '8080',
         value: config.port?.toString() || '8080'
     });
-    if (!portStr) return false;
+    if (!portStr) {return false;}
     
     const port = parseInt(portStr);
     if (isNaN(port)) {
@@ -138,14 +141,14 @@ async function checkAndUpdateUserConfig(): Promise<boolean> {
         placeHolder: 'username',
         value: config.username
     });
-    if (!username) return false;
+    if (!username) {return false;}
 
     const password = await vscode.window.showInputBox({
         prompt: '请输入密码',
         placeHolder: 'password',
         value: config.password
     });
-    if (!password) return false;
+    if (!password) {return false;}
 
     await configManager.updateConfig({ username, password });
     vscode.window.showInformationMessage('用户配置已保存');
@@ -157,6 +160,8 @@ async function checkAndUpdateConfig(): Promise<boolean> {
     await configManager.ensureConfigExists();
 
     const config = configManager.getConfig();
+
+    // 根目录策略：编译时按当前文件自动识别；这里仅做存在性检查，不强制覆盖配置。
 
     // 检查是否需要配置
     const needsServerConfig = !config.host || !config.port;
@@ -311,33 +316,29 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         'game-server-compiler.compileCurrentFile': async () => {
             outputChannel.appendLine('==== 执行编译当前文件命令 ====');
-            if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
-                vscode.window.showErrorMessage('请先连接服务器并确保角色已登录');
-                return;
-            }
-
             const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showErrorMessage('没有打开的文件');
+            const filePath = editor?.document.uri.fsPath;
+            const compileCheck = checkCompilePreconditions(
+                { connected: tcpClient.isConnected(), loggedIn: tcpClient.isLoggedIn() },
+                filePath
+            );
+            if (!compileCheck.ok) {
+                vscode.window.showErrorMessage(compileCheck.reason || '编译前置检查失败');
                 return;
             }
-
-            const filePath = editor.document.uri.fsPath;
-            if (!isCompilableFile(filePath)) {
-                vscode.window.showErrorMessage('只能编译.c或.lpc文件');
-                return;
-            }
+            const safeFilePath = filePath as string;
 
             try {
-                outputChannel.appendLine(`原始文件路径: ${filePath}`);
-                const mudPath = convertToMudPath(filePath);
+                outputChannel.appendLine(`原始文件路径: ${safeFilePath}`);
+                const mudPath = await convertToMudPath(safeFilePath);
                 outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
                 tcpClient.sendUpdateCommand(mudPath);
                 messageProvider?.addMessage(`正在编译文件: ${mudPath}`);
             } catch (error) {
                 outputChannel.appendLine(`编译文件失败: ${error}`);
                 messageProvider?.addMessage(`编译文件失败: ${error}`);
-                vscode.window.showErrorMessage('编译文件失败');
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`编译文件失败: ${errorMessage}`);
             }
         },
         'game-server-compiler.compileDir': async () => {
@@ -637,7 +638,7 @@ export async function activate(context: vscode.ExtensionContext) {
             
             try {
                 const filePath = document.uri.fsPath;
-                const mudPath = convertToMudPath(filePath);
+                const mudPath = await convertToMudPath(filePath);
                 outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
                 messageProvider?.addMessage(`编译文件: ${mudPath}`);
                 tcpClient.sendUpdateCommand(mudPath);

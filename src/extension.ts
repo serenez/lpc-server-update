@@ -50,7 +50,7 @@ async function convertToMudPath(fullPath: string): Promise<string> {
         return resolved.mudPath;
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`${detail}。可尝试执行“重置项目路径”。`);
+        throw new Error(detail);
     }
 }
 
@@ -341,6 +341,28 @@ export async function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(`编译文件失败: ${errorMessage}`);
             }
         },
+        'game-server-compiler.copyMudPath': async () => {
+            outputChannel.appendLine('==== 复制当前文件相对路径 ====');
+            const editor = vscode.window.activeTextEditor;
+            const filePath = editor?.document.uri.fsPath;
+
+            if (!filePath) {
+                vscode.window.showErrorMessage('请先打开一个文件');
+                return;
+            }
+
+            try {
+                const mudPath = await convertToMudPath(filePath);
+                await vscode.env.clipboard.writeText(mudPath);
+                outputChannel.appendLine(`已复制路径: ${mudPath}`);
+                messageProvider?.addMessage(`已复制路径: ${mudPath}`);
+                vscode.window.showInformationMessage(`已复制: ${mudPath}`);
+            } catch (error) {
+                outputChannel.appendLine(`复制路径失败: ${error}`);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`复制路径失败: ${errorMessage}`);
+            }
+        },
         'game-server-compiler.compileDir': async () => {
             outputChannel.appendLine('==== 执行编译目录命令 ====');
             if (!tcpClient.isConnected() || !tcpClient.isLoggedIn()) {
@@ -575,25 +597,6 @@ export async function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(`切换配置失败: ${error}`);
             }
         },
-        'game-server-compiler.resetProjectPath': async () => {
-            outputChannel.appendLine('==== 重置项目路径 ====');
-            try {
-                const confirm = await vscode.window.showWarningMessage(
-                    '确定要重置项目路径吗？这将更新配置文件中的项目目录路径。',
-                    '确定',
-                    '取消'
-                );
-
-                if (confirm === '确定') {
-                    await configManager.resetRootPath();
-                    messageProvider?.addMessage('✅ 项目路径已重置');
-                }
-            } catch (error) {
-                outputChannel.appendLine(`重置项目路径失败: ${error}`);
-                messageProvider?.addMessage(`重置项目路径失败: ${error}`);
-                vscode.window.showErrorMessage(`重置项目路径失败: ${error}`);
-            }
-        }
     };
 
     // 注册所有命令

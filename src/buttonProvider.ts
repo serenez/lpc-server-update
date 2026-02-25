@@ -10,6 +10,11 @@ interface CustomCommand {
     command: string;
 }
 
+interface FavoriteFile {
+    name: string;
+    path: string;
+}
+
 export class ButtonProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _isConnected: boolean = false;
@@ -18,6 +23,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _disposables: vscode.Disposable[] = [];
     private _customCommands: CustomCommand[] = [];
     private _customEvals: CustomCommand[] = [];
+    private _favoriteFiles: FavoriteFile[] = [];
     private _outputChannel: vscode.OutputChannel;
     private _configManager: ConfigManager; // 🚀 新增：配置管理器引用
 
@@ -51,8 +57,18 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 const config = JSON.parse(configData);
                 this._customCommands = config.customCommands || [];
                 this._customEvals = config.customEvals || [];
+                this._favoriteFiles = (config.favoriteFiles || []).map((item: any) => {
+                    if (typeof item === 'string') {
+                        return { name: path.basename(item), path: item };
+                    }
+                    return {
+                        name: item?.name || path.basename(item?.path || ''),
+                        path: item?.path || ''
+                    };
+                }).filter((item: FavoriteFile) => !!item.path);
                 console.log('Loaded custom commands:', this._customCommands);
                 console.log('Loaded custom evals:', this._customEvals);
+                console.log('Loaded favorite files:', this._favoriteFiles);
             }
         } catch (error) {
             console.error('Failed to load custom commands:', error);
@@ -78,9 +94,14 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 this._customEvals.forEach(cmd => {
                     this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
                 });
+                this._outputChannel.appendLine('常用文件列表:');
+                this._favoriteFiles.forEach(file => {
+                    this._outputChannel.appendLine(`- ${file.name}: ${file.path}`);
+                });
                 
                 config.customCommands = this._customCommands;
                 config.customEvals = this._customEvals;
+                config.favoriteFiles = this._favoriteFiles;
                 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
             }
         } catch (error) {
@@ -203,6 +224,92 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 html: commandsHtml
             });
         }
+    }
+
+    private async addFavoriteCurrentFile() {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage('没有打开的文件，无法添加到常用文件');
+            return;
+        }
+
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+        if (!workspaceRoot) {
+            vscode.window.showWarningMessage('未找到工作区，无法添加常用文件');
+            return;
+        }
+
+        const filePath = editor.document.uri.fsPath;
+        const relativePath = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
+        if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+            vscode.window.showWarningMessage('当前文件不在工作区内，无法添加到常用文件');
+            return;
+        }
+
+        if (this._favoriteFiles.some(file => file.path === relativePath)) {
+            vscode.window.showInformationMessage('该文件已在常用文件中');
+            return;
+        }
+
+        this._favoriteFiles.push({
+            name: path.basename(filePath),
+            path: relativePath
+        });
+        await this.saveCustomCommands();
+        this.refreshFavoriteFilesInView();
+        vscode.window.showInformationMessage(`已添加常用文件: ${relativePath}`);
+    }
+
+    private async openFavoriteFile(relativePath: string) {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('未找到工作区，无法打开常用文件');
+            return;
+        }
+
+        const fullPath = path.join(workspaceRoot, relativePath);
+        if (!fs.existsSync(fullPath)) {
+            vscode.window.showErrorMessage(`文件不存在: ${relativePath}`);
+            return;
+        }
+
+        const doc = await vscode.workspace.openTextDocument(fullPath);
+        await vscode.window.showTextDocument(doc, { preview: false });
+    }
+
+    private async deleteFavoriteFile(index: number) {
+        if (index < 0 || index >= this._favoriteFiles.length) {
+            return;
+        }
+        this._favoriteFiles.splice(index, 1);
+        await this.saveCustomCommands();
+        this.refreshFavoriteFilesInView();
+    }
+
+    private generateFavoriteFilesHtml(): string {
+        return this._favoriteFiles.map((file, index) => `
+            <div class="dropdown-item" data-file-path="${this.escapeHtml(file.path)}">
+                <span class="button-icon">📄</span>
+                <span title="${this.escapeHtml(file.path)}">${this.escapeHtml(file.name)}</span>
+                <div class="button-group">
+                    <span class="delete-favorite-button" data-index="${index}" title="移除">🗑️</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    private refreshFavoriteFilesInView() {
+        if (!this._view) {
+            return;
+        }
+        this._view.webview.postMessage({
+            type: 'updateFavoriteFiles',
+            html: this.generateFavoriteFilesHtml()
+        });
+        this._view.webview.postMessage({
+            type: 'updateState',
+            favoriteFiles: this._favoriteFiles
+        });
     }
 
     // 🚀 ========== 新增：配置切换处理 ==========
@@ -402,6 +509,18 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             this._outputChannel.appendLine('添加新配置');
                             await this.handleAddProfile();
                             break;
+                        case 'addFavoriteFile':
+                            this._outputChannel.appendLine('添加常用文件');
+                            await this.addFavoriteCurrentFile();
+                            break;
+                        case 'openFavoriteFile':
+                            this._outputChannel.appendLine(`打开常用文件: ${message.filePath}`);
+                            await this.openFavoriteFile(message.filePath);
+                            break;
+                        case 'deleteFavoriteFile':
+                            this._outputChannel.appendLine(`删除常用文件: index=${message.index}`);
+                            await this.deleteFavoriteFile(message.index);
+                            break;
                     }
                 } catch (error) {
                     this._outputChannel.appendLine(`命令执行错误: ${error}`);
@@ -475,6 +594,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             this._customEvals.forEach(cmd => {
                 this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
             });
+            this._outputChannel.appendLine('常用文件:');
+            this._favoriteFiles.forEach(file => {
+                this._outputChannel.appendLine(`- ${file.name}: ${file.path}`);
+            });
 
             // 发送状态更新消息
             const config = this.getCurrentConfig();
@@ -485,6 +608,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 initialized: this._isInitialized,
                 customCommands: this._customCommands,
                 customEvals: this._customEvals,
+                favoriteFiles: this._favoriteFiles,
                 config: config,
                 profiles: config.profiles || {},
                 activeProfileId: config.activeProfile || 'default'
@@ -830,10 +954,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 flex: 1;
                 padding: 6px 10px;
                 background: var(--vscode-dropdown-background);
-                color: var(--vscode-dropdown-foreground);
+                color: var(--vscode-foreground);
                 border: 1px solid var(--vscode-dropdown-border);
                 border-radius: 6px;
                 font-size: 13px;
+                font-weight: 500;
                 cursor: pointer;
                 outline: none;
                 transition: all 0.2s;
@@ -847,6 +972,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             .profile-dropdown:focus {
                 border-color: var(--vscode-focusBorder);
                 box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+            }
+
+            .profile-dropdown option {
+                background: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background));
+                color: var(--vscode-foreground);
             }
 
             .icon-button {
@@ -923,6 +1053,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             </div>
         `).join('');
 
+        const favoriteFilesHtml = this.generateFavoriteFilesHtml();
+
         return `<!DOCTYPE html>
             <html lang="zh-CN">
             <head>
@@ -976,14 +1108,34 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </div>
                 </div>
 
+                <div class="dropdown">
+                    <button class="dropdown-button" id="favoriteFilesDropdown">
+                        <span class="button-icon">⭐</span>
+                        <span>常用文件</span>
+                        <span style="margin-left: auto">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="favoriteFilesList">
+                        <div class="dropdown-items-container">
+                            ${favoriteFilesHtml}
+                            <button class="add-button" id="addFavoriteFile">
+                                <span class="button-icon">➕</span>
+                                <span>添加当前文件到常用</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="button-row">
+                    <button id="copyMudPath" disabled>
+                        <span class="button-icon">📋</span>
+                        <span>复制相对路径</span>
+                    </button>
+                </div>
+
                 <div class="button-row">
                     <button id="restart" disabled>
                         <span class="button-icon">🔃</span>
                         <span>重启服务器</span>
-                    </button>
-                    <button id="resetProjectPath">
-                        <span class="button-icon">🔄</span>
-                        <span>重置项目路径</span>
                     </button>
                 </div>
 
@@ -1039,6 +1191,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             initialized: ${this._isInitialized},
                             customCommands: ${JSON.stringify(this._customCommands)},
                             customEvals: ${JSON.stringify(this._customEvals)},
+                            favoriteFiles: ${JSON.stringify(this._favoriteFiles)},
                             config: ${JSON.stringify(this.getCurrentConfig())},
                             profiles: ${JSON.stringify(this.getCurrentConfig().profiles || {})},
                             activeProfileId: '${this.getCurrentConfig().activeProfile || 'default'}'
@@ -1049,8 +1202,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             'connect': 'game-server-compiler.connect',
                             'compile': 'game-server-compiler.compileCurrentFile',
                             'compileDir': 'game-server-compiler.compileDir',
-                            'restart': 'game-server-compiler.restart',
-                            'resetProjectPath': 'game-server-compiler.resetProjectPath'
+                            'copyMudPath': 'game-server-compiler.copyMudPath',
+                            'restart': 'game-server-compiler.restart'
                         };
 
                         // 绑定基础按钮事件
@@ -1068,7 +1221,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         });
 
                         // 绑定下拉菜单事件
-                        ['customCommandsDropdown', 'customEvalsDropdown'].forEach(id => {
+                        ['customCommandsDropdown', 'customEvalsDropdown', 'favoriteFilesDropdown'].forEach(id => {
                             const dropdown = document.getElementById(id);
                             if (dropdown) {
                                 dropdown.addEventListener('click', () => {
@@ -1089,6 +1242,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             vscode.postMessage({ 
                                 type: 'addCustomCommand',
                                 isEval: true
+                            });
+                        });
+                        document.getElementById('addFavoriteFile')?.addEventListener('click', () => {
+                            vscode.postMessage({
+                                type: 'addFavoriteFile'
                             });
                         });
 
@@ -1147,9 +1305,37 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             });
                         }
 
+                        function bindFavoriteFileEvents(container) {
+                            container.querySelectorAll('.dropdown-item').forEach(item => {
+                                item.addEventListener('click', (e) => {
+                                    if (!e.target.classList.contains('delete-favorite-button')) {
+                                        const filePath = item.dataset.filePath;
+                                        if (filePath) {
+                                            vscode.postMessage({
+                                                type: 'openFavoriteFile',
+                                                filePath: filePath
+                                            });
+                                        }
+                                    }
+                                });
+                            });
+
+                            container.querySelectorAll('.delete-favorite-button').forEach(button => {
+                                button.addEventListener('click', (e) => {
+                                    e.stopPropagation();
+                                    const index = parseInt(button.dataset.index);
+                                    vscode.postMessage({
+                                        type: 'deleteFavoriteFile',
+                                        index: index
+                                    });
+                                });
+                            });
+                        }
+
                         // 初始化时绑定事件
                         const commandsList = document.getElementById('customCommandsList');
                         const evalsList = document.getElementById('customEvalsList');
+                        const favoritesList = document.getElementById('favoriteFilesList');
                         if (commandsList) {
                             const container = commandsList.querySelector('.dropdown-items-container');
                             if (container) bindCustomCommandEvents(container, false);
@@ -1157,6 +1343,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         if (evalsList) {
                             const container = evalsList.querySelector('.dropdown-items-container');
                             if (container) bindCustomCommandEvents(container, true);
+                        }
+                        if (favoritesList) {
+                            const container = favoritesList.querySelector('.dropdown-items-container');
+                            if (container) bindFavoriteFileEvents(container);
                         }
 
                         // 点击外部关闭下拉菜单
@@ -1218,8 +1408,6 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             const addOption = document.createElement('option');
                             addOption.value = '__add_new__';
                             addOption.textContent = '➕ 添加新配置...';
-                            addOption.style.color = 'var(--vscode-textLink-foreground)';
-                            addOption.style.fontStyle = 'italic';
                             select.appendChild(addOption);
 
                             console.log('配置选择器已更新，当前配置:', state.activeProfileId);
@@ -1241,9 +1429,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                         if (textSpan) {
                                             textSpan.textContent = state.connected ? '断开服务器' : '连接游戏服务器';
                                         }
-                                    } else if (id === 'resetProjectPath') {
-                                        // 🚀 "重置项目路径"按钮始终可用
-                                        button.disabled = false;
+                                    } else if (id === 'copyMudPath') {
+                                        button.disabled = !state.initialized;
                                     } else {
                                         // 其他按钮的处理
                                         button.disabled = !state.initialized || !state.connected || !state.loggedIn;
@@ -1258,6 +1445,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     button.disabled = !state.initialized || !state.connected || !state.loggedIn;
                                 }
                             });
+                            const favoriteDropdown = document.getElementById('favoriteFilesDropdown');
+                            if (favoriteDropdown) {
+                                favoriteDropdown.disabled = !state.initialized;
+                            }
 
                             // 🚀 更新配置选择器和显示
                             updateProfileSelector();
@@ -1343,6 +1534,26 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                         container.appendChild(addButton);
                                         // 重新绑定事件
                                         bindCustomCommandEvents(container, message.isEval);
+                                    }
+                                    break;
+                                case 'updateFavoriteFiles':
+                                    const favoriteContainer = document.querySelector('#favoriteFilesList .dropdown-items-container');
+                                    if (favoriteContainer) {
+                                        const addButton = favoriteContainer.querySelector('#addFavoriteFile');
+                                        favoriteContainer.innerHTML = message.html;
+                                        if (addButton) {
+                                            favoriteContainer.appendChild(addButton);
+                                        } else {
+                                            const button = document.createElement('button');
+                                            button.className = 'add-button';
+                                            button.id = 'addFavoriteFile';
+                                            button.innerHTML = '<span class="button-icon">➕</span><span>添加当前文件到常用</span>';
+                                            favoriteContainer.appendChild(button);
+                                            button.addEventListener('click', () => {
+                                                vscode.postMessage({ type: 'addFavoriteFile' });
+                                            });
+                                        }
+                                        bindFavoriteFileEvents(favoriteContainer);
                                     }
                                     break;
                                 // ... existing cases ...

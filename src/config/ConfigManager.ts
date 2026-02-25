@@ -326,39 +326,6 @@ export class ConfigManager {
     }
 
     /**
-     * 🚀 重置项目路径
-     */
-    public async resetRootPath(): Promise<void> {
-        const logger = LogManager.getInstance();
-
-        try {
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {
-                throw new Error('未找到工作区目录');
-            }
-
-            // 🚀 修改当前激活配置的rootPath
-            const activeProfileId = this.config.activeProfile;
-            const oldRootPath = this.config.profiles[activeProfileId].rootPath;
-            this.config.profiles[activeProfileId].rootPath = workspaceRoot;
-
-            await this.saveConfig();
-
-            logger.log(`项目路径已重置`, LogLevel.INFO);
-            logger.log(`旧路径: ${oldRootPath}`, LogLevel.INFO);
-            logger.log(`新路径: ${workspaceRoot}`, LogLevel.INFO);
-
-            vscode.window.showInformationMessage(
-                `项目路径已更新\n旧路径: ${oldRootPath}\n新路径: ${workspaceRoot}`
-            );
-        } catch (error) {
-            logger.log(`重置项目路径失败: ${error}`, LogLevel.ERROR);
-            vscode.window.showErrorMessage(`重置项目路径失败: ${error}`);
-            throw error;
-        }
-    }
-
-    /**
      * 🚀 创建最小化的内存配置（配置文件不存在时使用）
      */
     private createMinimalConfig(): any {

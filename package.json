@@ -49,13 +49,14 @@
     "onStartupFinished",
     "onCommand:game-server-compiler.connect",
     "onCommand:game-server-compiler.compileCurrentFile",
+    "onCommand:game-server-compiler.copyMudPath",
     "onCommand:game-server-compiler.compileDir",
     "onCommand:game-server-compiler.sendCommand",
     "onCommand:game-server-compiler.eval",
     "onCommand:game-server-compiler.restart",
     "onCommand:game-server-compiler.showPerformanceReport",
     "onCommand:game-server-compiler.resetPerformanceMetrics",
-    "onCommand:game-server-compiler.resetProjectPath"
+    "onCommand:game-server-compiler.switchProfile"
   ],
   "contributes": {
     "configuration": {
@@ -208,6 +209,11 @@
         "category": "LPC服务器"
       },
       {
+        "command": "game-server-compiler.copyMudPath",
+        "title": "复制当前文件相对路径",
+        "category": "LPC服务器"
+      },
+      {
         "command": "game-server-compiler.compileDir",
         "title": "编译目录",
         "category": "LPC服务器"
@@ -233,11 +239,6 @@
         "category": "LPC服务器"
       },
       {
-        "command": "game-server-compiler.resetProjectPath",
-        "title": "重置项目路径",
-        "category": "LPC服务器"
-      },
-      {
         "command": "game-server-compiler.switchProfile",
         "title": "切换配置环境",
         "category": "LPC服务器"
@@ -254,6 +255,10 @@
           "command": "game-server-compiler.compileCurrentFile",
           "group": "lpcServer@2",
           "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
+        },
+        {
+          "command": "game-server-compiler.copyMudPath",
+          "group": "lpcServer@2.5"
         },
         {
           "command": "game-server-compiler.compileDir",

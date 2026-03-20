@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
@@ -10,7 +10,7 @@
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
-[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.1 - 多配置与调试增强**
+[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.2 - 保存时自动生成函数声明**
 
 </div>
 
@@ -121,6 +121,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
       "compile": {
         "defaultDir": "/cmds",
         "autoCompileOnSave": false,
+        "autoDeclareFunctionsOnSave": true,
         "timeout": 30000,
         "showDetails": true
       },
@@ -149,6 +150,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 🔄 **自动迁移**：旧版本配置会自动迁移到新格式
 - 🧭 **自动识别项目根目录**：优先按 `log/adm/cmds/feature/include/std/inherit` 目录特征识别根目录（命中 >=3）
 - ℹ️ **rootPath 兜底**：`rootPath` 仅作为自动识别失败时的备用路径
+- ✍️ **保存自动生成声明**：`compile.autoDeclareFunctionsOnSave` 默认开启，保存 `mudlib` 下 `.c` 文件时自动刷新函数声明块
 
 <details>
 <summary><b>📖 旧版本格式（V1）自动迁移</b></summary>
@@ -186,14 +188,12 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 2. 点击 "连接游戏服务器"
 3. 开始编码！
 
-### 🔥 最新改进（1.3.1）
+### 🔥 最新改进（1.3.2）
 
-- 📋 **复制当前文件相对路径**：一键复制 `/adm/daemons/logind` 这种 MUD 相对路径（不带后缀、不带项目根目录）
-- ⭐ **常用文件快捷打开**：可把常用文件加入列表（如 `include/ansi.h`），点击即打开
-- 🧪 **原始数据模式**：消息面板支持 `原始:开/关`，开启后可直接查看服务器原始数据
-- 🧹 **输出精简**：默认仅保留关键状态日志（连接/验证/登录/编译结果/错误），减少调试噪音
-- ✅ **编译结果强化**：显式输出编译成功与编译失败摘要，排查更直接
-- ♻️ **移除重置项目路径入口**：路径解析改为自动识别为主，避免手工维护路径
+- ✍️ **保存自动生成函数声明**：保存 `mudlib` 范围内的 `.c` 文件时，自动扫描函数并在文件顶部生成或刷新声明块
+- ⚙️ **新增声明开关**：支持 `gameServerCompiler.compile.autoDeclareFunctionsOnSave` 配置，默认开启，可按需关闭
+- 🔄 **与自动编译无缝衔接**：声明更新发生在保存前阶段；保存完成后，原有自动编译链路继续生效
+- 🧠 **兼容常见 LPC 写法**：支持 `protected int foo()` 和 `create()` 这类无返回类型函数的声明提取
 
 ---
 
@@ -215,6 +215,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ### 📝 代码编译
 - 快速编译当前文件
 - 支持整个目录编译
+- 保存 `mudlib` 下 `.c` 文件时自动生成函数声明
 - 错误实时提示与定位
 - 点击错误直接跳转
 

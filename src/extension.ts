@@ -6,6 +6,7 @@ import { LogManager } from './log/LogManager';
 import { ConfigManager } from './config/ConfigManager';
 import { PathConverter } from './utils/PathConverter';
 import { checkCompilePreconditions } from './utils/CompilePreconditions';
+import { shouldAutoDeclareForFile, updateAutoDeclarations } from './utils/AutoDeclaration';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
@@ -57,6 +58,31 @@ async function convertToMudPath(fullPath: string): Promise<string> {
 // 检查文件是否可编译
 function isCompilableFile(filePath: string): boolean {
     return filePath.endsWith('.c') || filePath.endsWith('.lpc');
+}
+
+function isAutoDeclareOnSaveEnabled(): boolean {
+    return vscode.workspace
+        .getConfiguration('gameServerCompiler')
+        .get<boolean>('compile.autoDeclareFunctionsOnSave', true);
+}
+
+function buildAutoDeclarationEdits(document: vscode.TextDocument): vscode.TextEdit[] {
+    if (!isAutoDeclareOnSaveEnabled() || !shouldAutoDeclareForFile(document.fileName)) {
+        return [];
+    }
+
+    const originalText = document.getText();
+    const updatedText = updateAutoDeclarations(originalText);
+    if (updatedText === originalText) {
+        return [];
+    }
+
+    const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(originalText.length)
+    );
+
+    return [vscode.TextEdit.replace(fullRange, updatedText)];
 }
 
 // 检查并更新服务器配置
@@ -608,6 +634,16 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 注册文件保存监听
     context.subscriptions.push(
+        vscode.workspace.onWillSaveTextDocument((event) => {
+            try {
+                const edits = buildAutoDeclarationEdits(event.document);
+                if (edits.length > 0) {
+                    event.waitUntil(Promise.resolve(edits));
+                }
+            } catch (error) {
+                outputChannel.appendLine(`自动生成函数声明失败: ${error}`);
+            }
+        }),
         vscode.workspace.onDidSaveTextDocument(async (document) => {
             // 🚀 优先检查文件类型，不是.c或.lpc文件直接返回，不输出任何日志
             if (!isCompilableFile(document.fileName)) {

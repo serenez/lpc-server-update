@@ -92,3 +92,17 @@ test('resolveMudPathAutoRoot uses detected mud project root', () => {
 
     fs.rmSync(base, { recursive: true, force: true });
 });
+
+test('resolveLocalPathWithRoot prefers detected project root over workspace root', () => {
+    const resolved = PathConverter.resolveLocalPathWithRoot(
+        '/cmds/wiz/testcmd.c',
+        'c:/Users/vrustx/Desktop/mud_nextB/duobao',
+        'c:/Users/vrustx/Desktop/mud_nextB'
+    );
+
+    assert.equal(resolved.usedRootPath, 'c:/Users/vrustx/Desktop/mud_nextB/duobao');
+    assert.equal(
+        resolved.localPath.replace(/\\/g, '/'),
+        'c:/Users/vrustx/Desktop/mud_nextB/duobao/cmds/wiz/testcmd.c'
+    );
+});

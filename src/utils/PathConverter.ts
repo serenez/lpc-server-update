@@ -96,6 +96,35 @@ export class PathConverter {
         }
     }
 
+    static resolveLocalPathWithRoot(
+        mudPath: string,
+        preferredRootPath: string,
+        fallbackRootPath?: string
+    ): { localPath: string; usedRootPath: string } {
+        try {
+            return {
+                localPath: this.toLocalPath(mudPath, preferredRootPath),
+                usedRootPath: preferredRootPath
+            };
+        } catch (primaryError) {
+            if (fallbackRootPath && fallbackRootPath !== preferredRootPath) {
+                try {
+                    return {
+                        localPath: this.toLocalPath(mudPath, fallbackRootPath),
+                        usedRootPath: fallbackRootPath
+                    };
+                } catch {
+                    // ignore fallback error and throw a combined diagnostic error below
+                }
+            }
+
+            const primaryMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
+            throw new ValidationError(
+                `路径转换失败: preferredRootPath=${preferredRootPath}, mudPath=${mudPath}, reason=${primaryMessage}`
+            );
+        }
+    }
+
     static toMudPath(fullPath: string, rootPath: string): string {
         try {
             if (!fullPath || !rootPath) {
@@ -133,10 +162,12 @@ export class PathConverter {
                 throw new ValidationError('路径参数不能为空');
             }
 
-            const normalizedPath = path.normalize(mudPath).replace(/\\/g, '/');
-            const fullPath = path.join(rootPath, normalizedPath);
-            
-            if (!fullPath.startsWith(rootPath)) {
+            const normalizedRootPath = path.resolve(rootPath);
+            const normalizedPath = mudPath.replace(/\\/g, '/').replace(/^\/+/, '');
+            const fullPath = path.resolve(normalizedRootPath, normalizedPath);
+            const relativePath = path.relative(normalizedRootPath, fullPath);
+
+            if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
                 throw new ValidationError('非法的路径');
             }
             

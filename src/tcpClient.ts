@@ -13,6 +13,20 @@ import { CircularBuffer } from './utils/CircularBuffer';
 import { MessageDeduplicator } from './utils/MessageDeduplicator';
 import { MessageWorkerManager } from './workers/MessageWorkerManager';
 import { PerformanceMonitor } from './utils/PerformanceMonitor';
+import { PathConverter } from './utils/PathConverter';
+import {
+    beginCompilerMessageFilterState,
+    consumeCompilerNoiseLine,
+    formatCompilerDiagnosticSummary,
+    parseCompilerDiagnosticHeader,
+    type CompilerMessageFilterState
+} from './utils/compilerDiagnostics';
+import { shouldRevealProblemsPanel, type ProblemsAutoRevealMode } from './utils/diagnosticUi';
+import {
+    consumeMudlibCompileFallbackLine,
+    createMudlibCompileFallbackState,
+    type MudlibCompileFallbackState
+} from './utils/mudlibCompileFallback';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -66,7 +80,14 @@ export class TcpClient implements IDisposable {
     private firstErrorFile: string = '';
     private errorLine: number = 0;
     private errorMessage: string = '';
-    private isIgnoringStackTrace: boolean = false;
+    private currentCompileRootPath: string | null = null;
+    private compilerMessageFilterState: CompilerMessageFilterState = {
+        awaitingSourceLine: false,
+        awaitingCaretLine: false
+    };
+    private mudlibCompileFallbackState: MudlibCompileFallbackState =
+        createMudlibCompileFallbackState();
+    private suppressCompilerContinuation: boolean = false;
     private commandTimeout: number = 30000; // 30秒超时
     private pendingCommand: boolean = false;
 
@@ -283,6 +304,142 @@ export class TcpClient implements IDisposable {
                 return; // 跳过重复消息
             }
 
+            const cleanedMessage = this.cleanColorCodes(message).trimEnd();
+
+            const noiseResult = consumeCompilerNoiseLine(
+                cleanedMessage,
+                this.compilerMessageFilterState
+            );
+            this.compilerMessageFilterState = noiseResult.nextState;
+            if (noiseResult.consumed) {
+                this.log(cleanedMessage, LogLevel.DEBUG);
+                return;
+            }
+
+            const mudlibFallbackResult = consumeMudlibCompileFallbackLine(
+                cleanedMessage,
+                this.mudlibCompileFallbackState
+            );
+            this.mudlibCompileFallbackState = mudlibFallbackResult.nextState;
+            if (mudlibFallbackResult.emittedDiagnostic) {
+                const diagnostic = mudlibFallbackResult.emittedDiagnostic;
+                const isFirstError = !this.firstErrorFile;
+                if (isFirstError) {
+                    this.firstErrorFile = diagnostic.file;
+                    this.errorLine = diagnostic.line;
+                    this.errorMessage = diagnostic.message;
+                }
+
+                const localPath = this.resolveDiagnosticLocalPath(diagnostic.file);
+                if (localPath) {
+                    this.messageProvider?.addCompilerDiagnostic?.({
+                        displayPath: diagnostic.file,
+                        localPath,
+                        line: diagnostic.line,
+                        column: diagnostic.column,
+                        message: diagnostic.message,
+                        severity: diagnostic.severity
+                    });
+                } else {
+                    const summary = formatCompilerDiagnosticSummary(diagnostic);
+                    this.messageProvider?.addMessage(summary);
+                }
+                this.log(
+                    `编译失败: ${diagnostic.file}:${diagnostic.line}${diagnostic.column ? `:${diagnostic.column}` : ''} ${diagnostic.message}`,
+                    LogLevel.ERROR
+                );
+                this.showCompileError(
+                    diagnostic.file,
+                    diagnostic.line,
+                    diagnostic.message,
+                    localPath,
+                    diagnostic.column,
+                    vscode.DiagnosticSeverity.Error,
+                    isFirstError
+                );
+                this.maybeRevealProblemsPanel('error');
+                return;
+            }
+            if (mudlibFallbackResult.consumed) {
+                this.log(cleanedMessage, LogLevel.DEBUG);
+                return;
+            }
+
+            const compilerDiagnostic = parseCompilerDiagnosticHeader(cleanedMessage);
+            if (compilerDiagnostic) {
+                this.suppressCompilerContinuation = true;
+                this.compilerMessageFilterState = beginCompilerMessageFilterState();
+
+                // 处理 debug_eval_file.c 的错误显示
+                if (compilerDiagnostic.file === '/debug_eval_file.c') {
+                    const evalErrorMsg = `❌ Eval指令执行错误: ${compilerDiagnostic.message}`;
+                    this.messageProvider?.addMessage(evalErrorMsg);
+                    this.log(evalErrorMsg, LogLevel.ERROR, false);
+                    return;
+                }
+
+                const isFirstError =
+                    compilerDiagnostic.severity === 'error' && !this.firstErrorFile;
+
+                if (isFirstError) {
+                    this.firstErrorFile = compilerDiagnostic.file;
+                    this.errorLine = compilerDiagnostic.line;
+                    this.errorMessage = compilerDiagnostic.message;
+                }
+
+                const location = compilerDiagnostic.column
+                    ? `${compilerDiagnostic.file}:${compilerDiagnostic.line}:${compilerDiagnostic.column}`
+                    : `${compilerDiagnostic.file}:${compilerDiagnostic.line}`;
+                const localPath = this.resolveDiagnosticLocalPath(compilerDiagnostic.file);
+                if (localPath) {
+                    this.messageProvider?.addCompilerDiagnostic?.({
+                        displayPath: compilerDiagnostic.file,
+                        localPath,
+                        line: compilerDiagnostic.line,
+                        column: compilerDiagnostic.column,
+                        message: compilerDiagnostic.message,
+                        severity: compilerDiagnostic.severity
+                    });
+                } else {
+                    const summary = formatCompilerDiagnosticSummary(compilerDiagnostic);
+                    this.messageProvider?.addMessage(summary);
+                }
+                if (compilerDiagnostic.severity === 'warning') {
+                    this.outputChannel.appendLine(`[警告] 编译警告: ${location} ${compilerDiagnostic.message}`);
+                } else {
+                    this.log(`编译失败: ${location} ${compilerDiagnostic.message}`, LogLevel.ERROR);
+                }
+
+                this.showCompileError(
+                    compilerDiagnostic.file,
+                    compilerDiagnostic.line,
+                    compilerDiagnostic.message,
+                    localPath,
+                    compilerDiagnostic.column,
+                    compilerDiagnostic.severity === 'warning'
+                        ? vscode.DiagnosticSeverity.Warning
+                        : vscode.DiagnosticSeverity.Error,
+                    isFirstError
+                );
+                this.maybeRevealProblemsPanel(compilerDiagnostic.severity);
+                return;
+            }
+
+            // 检查编译成功消息
+            if (cleanedMessage.includes('重新编译完毕')) {
+                this.clearDiagnostics();
+                
+                // 显示成功消息
+                this.messageProvider?.addMessage('✅ 编译成功');
+                this.log('编译成功', LogLevel.INFO);
+                return;
+            }
+
+            if (this.suppressCompilerContinuation) {
+                this.log(cleanedMessage, LogLevel.DEBUG);
+                return;
+            }
+
             // 处理 eval 命令结果
             if (message.startsWith('mixed eval(object me) { return ')) {
                 const evalResult = message.replace('mixed eval(object me) { return ', '');
@@ -301,53 +458,6 @@ export class TcpClient implements IDisposable {
                 message.startsWith('*Error in loading')) {
                 // 只在输出面板显示
                 this.log(message, LogLevel.DEBUG);
-                return;
-            }
-
-          // 检查是否是编译错误 显示所有信息
-          //this.log(message, LogLevel.DEBUG);
-            const errorMatch = message.match(/编译时段错误：([^:]+\.c)\s+line\s+(\d+):\s*(.*)/);
-            if (errorMatch) {
-                const [, filePath, lineNum, errorMessage] = errorMatch;
-                
-                // 处理 debug_eval_file.c 的错误显示
-                if (filePath === '/debug_eval_file.c') {
-                    // 显示友好的 eval 错误信息
-                    const evalErrorMsg = `❌ Eval指令执行错误: ${errorMessage}`;
-                    this.messageProvider?.addMessage(evalErrorMsg);
-                    this.log(evalErrorMsg, LogLevel.ERROR, false);
-                    return;
-                }
-                
-                // 重置之前的错误状态
-                this.clearDiagnostics();
-                
-                // 设置新的错误信息
-                this.firstErrorFile = filePath;
-                this.errorLine = parseInt(lineNum);
-                this.errorMessage = errorMessage;
-                
-                // 立即显示错误信息
-                const errorMsg = `❌ 编译错误:\n文件: ${filePath}\n行号: ${this.errorLine}\n错误: ${errorMessage}`;
-                this.messageProvider?.addMessage(errorMsg);
-                this.log(`编译失败: ${filePath}:${this.errorLine} ${errorMessage}`, LogLevel.ERROR);
-                
-                // 在编辑器中显示错误
-                this.showCompileError(filePath, this.errorLine, errorMessage);
-                return;
-            }
-
-            // 检查编译成功消息
-            if (message.includes('重新编译完毕')) {
-                // 清除所有错误状态
-                this.clearDiagnostics();
-                this.firstErrorFile = '';
-                this.errorLine = 0;
-                this.errorMessage = '';
-                
-                // 显示成功消息
-                this.messageProvider?.addMessage('✅ 编译成功');
-                this.log('编译成功', LogLevel.INFO);
                 return;
             }
 
@@ -831,6 +941,9 @@ export class TcpClient implements IDisposable {
         if (!this.checkState()) {
             return;
         }
+
+        this.suppressCompilerContinuation = false;
+        this.mudlibCompileFallbackState = createMudlibCompileFallbackState();
         
         try {
             await this.executeCommand(command, commandName);
@@ -856,7 +969,7 @@ export class TcpClient implements IDisposable {
         }
     }
 
-    async sendUpdateCommand(filePath: string) {
+    async sendUpdateCommand(filePath: string, compileRootPath?: string) {
         if (!this.checkState()) {
             return;
         }
@@ -865,6 +978,9 @@ export class TcpClient implements IDisposable {
         const endTimer = this.performanceMonitor.start('sendUpdateCommand');
 
         this.log(`🔄 准备编译文件: ${filePath}`, LogLevel.INFO);
+        const nextCompileRootPath = compileRootPath ?? this.currentCompileRootPath;
+        this.clearDiagnostics();
+        this.currentCompileRootPath = nextCompileRootPath;
 
         try {
             await this.sendCommand(`update ${filePath}`, '编译命令');
@@ -881,6 +997,8 @@ export class TcpClient implements IDisposable {
             if (showDetails) {
                 this.log(`发送编译命令: ${command}`, LogLevel.INFO);
             }
+
+            this.clearDiagnostics();
 
             const compilePromise = new Promise<void>((resolve, reject) => {
                 try {
@@ -1561,40 +1679,87 @@ export class TcpClient implements IDisposable {
         }
     }
 
-    private showCompileError(mudPath: string, line: number, message: string) {
+    private showCompileError(
+        mudPath: string,
+        line: number,
+        message: string,
+        localPath: string | null,
+        column?: number,
+        severity: vscode.DiagnosticSeverity = vscode.DiagnosticSeverity.Error,
+        revealToEditor: boolean = true
+    ) {
         try {
-            const config = this.configManager.getConfig();
-            const rootPath = config.rootPath;
-            
-            const localPath = path.join(rootPath, mudPath);
+            if (!localPath) {
+                this.log(`无法解析诊断文件路径: ${mudPath}`, LogLevel.ERROR);
+                return;
+            }
+
             const fileUri = vscode.Uri.file(localPath);
 
             const lineNumber = line - 1;
+            const startColumn = column ? Math.max(column - 1, 0) : 0;
+            const endColumn = column ? startColumn + 1 : Number.MAX_VALUE;
 
             const range = new vscode.Range(
-                new vscode.Position(lineNumber, 0),
-                new vscode.Position(lineNumber, Number.MAX_VALUE)
+                new vscode.Position(lineNumber, startColumn),
+                new vscode.Position(lineNumber, endColumn)
             );
 
             const diagnostic = new vscode.Diagnostic(
                 range,
                 message,
-                vscode.DiagnosticSeverity.Error
+                severity
             );
+            diagnostic.source = 'FluffOS Compiler';
 
             if (!this.diagnosticCollection) {
                 this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
             }
-            this.diagnosticCollection.set(fileUri, [diagnostic]);
 
-            vscode.workspace.openTextDocument(fileUri).then(doc => {
-                vscode.window.showTextDocument(doc).then(editor => {
-                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            const existingDiagnostics = this.diagnosticCollection.get(fileUri) ?? [];
+            this.diagnosticCollection.set(fileUri, [...existingDiagnostics, diagnostic]);
+
+            if (revealToEditor) {
+                vscode.workspace.openTextDocument(fileUri).then(doc => {
+                    vscode.window.showTextDocument(doc).then(editor => {
+                        editor.selection = new vscode.Selection(range.start, range.start);
+                        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                    });
                 });
-            });
+            }
         } catch (error) {
             this.log(`显示编译错误失败: ${error}`, LogLevel.ERROR);
         }
+    }
+
+    private resolveDiagnosticLocalPath(mudPath: string): string | null {
+        const config = this.configManager.getConfig();
+        const preferredRootPath = this.currentCompileRootPath || config.rootPath;
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+        try {
+            return PathConverter.resolveLocalPathWithRoot(
+                mudPath,
+                preferredRootPath,
+                workspaceRoot
+            ).localPath;
+        } catch (error) {
+            this.log(`转换诊断文件路径失败: ${error}`, LogLevel.ERROR);
+            return null;
+        }
+    }
+
+    private maybeRevealProblemsPanel(severity: 'error' | 'warning') {
+        const mode = this.config.get<ProblemsAutoRevealMode>(
+            'ui.autoRevealProblems',
+            'error'
+        );
+
+        if (!shouldRevealProblemsPanel(mode, severity)) {
+            return;
+        }
+
+        void vscode.commands.executeCommand('workbench.actions.view.problems');
     }
 
     /**
@@ -1604,6 +1769,16 @@ export class TcpClient implements IDisposable {
         if (this.diagnosticCollection) {
             this.diagnosticCollection.clear();
         }
+        this.firstErrorFile = '';
+        this.errorLine = 0;
+        this.errorMessage = '';
+        this.currentCompileRootPath = null;
+        this.suppressCompilerContinuation = false;
+        this.mudlibCompileFallbackState = createMudlibCompileFallbackState();
+        this.compilerMessageFilterState = {
+            awaitingSourceLine: false,
+            awaitingCaretLine: false
+        };
     }
 
     private showDiagnostics(filePath: string, line: number, message: string) {
@@ -1676,9 +1851,6 @@ export class TcpClient implements IDisposable {
     // 添加状态重置方法
     public resetState() {
         this.pendingCommand = false;
-        this.firstErrorFile = '';
-        this.errorLine = 0;
-        this.errorMessage = '';
         this.clearDiagnostics();
     }
 

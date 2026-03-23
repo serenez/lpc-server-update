@@ -18,6 +18,15 @@ interface Config {
     loginKey?: string;
 }
 
+interface CompilerDiagnosticPayload {
+    displayPath: string;
+    localPath: string;
+    line: number;
+    column?: number;
+    message: string;
+    severity: 'error' | 'warning';
+}
+
 export class MessageProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _messages: string[] = [];
@@ -235,16 +244,11 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'openFile':
                     try {
-                        // 转换为本地文件路径
-                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                        if (!workspaceRoot) {
-                            throw new Error('未找到工作区');
+                        if (!message.localPath) {
+                            throw new Error('缺少本地文件路径');
                         }
-                        
-                        // 移除开头的斜杠并组合完整路径
-                        const localPath = vscode.Uri.file(
-                            path.join(workspaceRoot, message.file.replace(/^\//, ''))
-                        );
+
+                        const localPath = vscode.Uri.file(message.localPath);
                         
                         // 打开文件并跳转到指定行
                         const document = await vscode.workspace.openTextDocument(localPath);
@@ -252,13 +256,81 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         
                         // 跳转到错误行并选中
                         const line = message.line - 1; // VSCode 行号从0开始
-                        const range = new vscode.Range(line, 0, line, 1000);
-                        editor.selection = new vscode.Selection(range.start, range.end);
+                        const column = Math.max((message.column ?? 1) - 1, 0);
+                        const range = new vscode.Range(line, column, line, column + 1);
+                        editor.selection = new vscode.Selection(range.start, range.start);
                         editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                     } catch (error) {
                         this.addMessage(`❌ 打开文件失败: ${error}`);
                     }
                     break;
+            }
+        });
+    }
+
+    public addCompilerDiagnostic(payload: CompilerDiagnosticPayload) {
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const timeFormat = config.get<string>('messages.timeFormat', 'HH:mm:ss');
+        const maxCount = config.get<number>('messages.maxCount', 1000);
+
+        if (this._messages.length >= maxCount) {
+            this._messages = this._messages.slice(-maxCount + 1);
+        }
+
+        const now = new Date();
+        let timestamp = '';
+
+        switch (timeFormat) {
+            case 'HH:mm':
+                timestamp = now.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                break;
+            case 'hh:mm:ss a':
+                timestamp = now.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                break;
+            case 'YYYY-MM-DD HH:mm:ss':
+                timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('zh-CN')}`;
+                break;
+            default:
+                timestamp = now.toLocaleTimeString('zh-CN');
+                break;
+        }
+
+        const icon = payload.severity === 'warning' ? '⚠️' : '❌';
+        const severityClass = payload.severity;
+        const locationText = payload.column
+            ? `${payload.displayPath}:${payload.line}:${payload.column}`
+            : `${payload.displayPath}:${payload.line}`;
+
+        const messageHtml = `<div class="message plugin-message ${severityClass}">
+            <div class="message-header">
+                <span class="timestamp">[${timestamp}]</span>
+            </div>
+            <div class="message-content">
+                <div class="error-link compiler-diagnostic ${severityClass}" data-file="${payload.displayPath}" data-local-path="${payload.localPath}" data-line="${payload.line}" data-column="${payload.column || '1'}">
+                    <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(payload.message)}</span>
+                </div>
+            </div>
+        </div>`;
+
+        this._messages.push(messageHtml);
+        this._view?.webview.postMessage({
+            type: 'addMessage',
+            value: messageHtml,
+            isError: severityClass === 'error',
+            errorData: {
+                filePath: payload.displayPath,
+                localPath: payload.localPath,
+                line: payload.line,
+                column: payload.column,
+                message: payload.message
             }
         });
     }
@@ -429,6 +501,28 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 font-size: 11px;
                 letter-spacing: 0.2px;
                 line-height: 1.4;
+            }
+
+            .compiler-diagnostic {
+                display: block;
+                width: 100%;
+                cursor: pointer;
+                color: inherit;
+                text-decoration: none;
+            }
+
+            .compiler-diagnostic-line {
+                display: block;
+                padding: 4px 6px;
+                border-radius: 4px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 11px;
+                line-height: 1.5;
+                background: rgba(255, 69, 58, 0.1);
+            }
+
+            .compiler-diagnostic.warning .compiler-diagnostic-line {
+                background: rgba(245, 158, 11, 0.14);
             }
 
             /* 消息类型样式 - 插件消息 */
@@ -943,14 +1037,18 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                             if (errorLink) {
                                 e.preventDefault();
                                 const filePath = errorLink.dataset.file;
+                                const localPath = errorLink.dataset.localPath;
                                 const line = parseInt(errorLink.dataset.line);
+                                const column = parseInt(errorLink.dataset.column || '1');
                                 
-                                console.log('Clicked error link:', { filePath, line });
+                                console.log('Clicked error link:', { filePath, localPath, line, column });
                                 
                                 vscode.postMessage({
                                     command: 'openFile',
                                     file: filePath,
-                                    line: line
+                                    localPath: localPath,
+                                    line: line,
+                                    column: column
                                 });
                             }
                         });
@@ -1351,6 +1449,42 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        const compilerDiagnosticMatch = message.match(
+            /^(?<icon>❌|⚠️)\s+(?<file>\/.+?):(?<line>\d+)(?::(?<column>\d+))?\s+(?<errorMessage>.+)$/
+        );
+        if (compilerDiagnosticMatch?.groups) {
+            const icon = compilerDiagnosticMatch.groups.icon;
+            const filePath = compilerDiagnosticMatch.groups.file;
+            const line = compilerDiagnosticMatch.groups.line;
+            const column = compilerDiagnosticMatch.groups.column;
+            const errorMessage = compilerDiagnosticMatch.groups.errorMessage;
+            const severityClass = icon === '⚠️' ? 'warning' : 'error';
+            const locationText = column ? `${filePath}:${line}:${column}` : `${filePath}:${line}`;
+
+            const messageHtml = `<div class="message ${isServerMessage ? 'server-message' : 'plugin-message'} ${severityClass}${extraClass}">
+                <div class="message-header">
+                    <span class="timestamp">[${timestamp}]</span>
+                </div>
+                <div class="message-content">
+                    <div class="error-link compiler-diagnostic ${severityClass}" data-file="${filePath}" data-line="${line}" data-column="${column || '1'}">
+                        <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(errorMessage)}</span>
+                    </div>
+                </div>
+            </div>`;
+
+            this._messages.push(messageHtml);
+            this._view?.webview.postMessage({
+                type: 'addMessage',
+                value: messageHtml,
+                isError: severityClass === 'error',
+                errorData: {
+                    filePath,
+                    line: parseInt(line),
+                    column: column ? parseInt(column) : undefined,
+                    message: errorMessage
+                }
+            });
+        } else {
         // 检查是否是编译错误消息
         const errorMatch = message.match(/❌ 编译错误:\s*文件:\s*([^\n]+)\s*行号:\s*(\d+)\s*错误:\s*(.*)/);
         if (errorMatch) {
@@ -1403,6 +1537,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             
             this._messages.push(messageHtml);
             this._view?.webview.postMessage({ type: 'addMessage', value: messageHtml });
+        }
         }
     }
 

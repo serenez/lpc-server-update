@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.3.3-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
@@ -10,7 +10,7 @@
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
-[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.2 - 保存时自动生成函数声明**
+[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.3 - 统一编译诊断与精准定位**
 
 </div>
 
@@ -188,12 +188,13 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 2. 点击 "连接游戏服务器"
 3. 开始编码！
 
-### 🔥 最新改进（1.3.2）
+### 🔥 最新改进（1.3.3）
 
-- ✍️ **保存自动生成函数声明**：保存 `mudlib` 范围内的 `.c` 文件时，自动扫描函数并在文件顶部生成或刷新声明块
-- ⚙️ **新增声明开关**：支持 `gameServerCompiler.compile.autoDeclareFunctionsOnSave` 配置，默认开启，可按需关闭
-- 🔄 **与自动编译无缝衔接**：声明更新发生在保存前阶段；保存完成后，原有自动编译链路继续生效
-- 🧠 **兼容常见 LPC 写法**：支持 `protected int foo()` 和 `create()` 这类无返回类型函数的声明提取
+- 🎯 **编译错误只保留一条摘要**：消息面板会把编译错误收敛成一条可点击卡片，避免 `编译位置 / 编译原因 / 源码片段 / 触发链` 把面板刷满
+- 📍 **点击直达文件/行/列**：错误卡片与 Problems 都会使用同一份本地绝对路径，支持直接跳到具体列号
+- ⚠️ **Problems 自动弹出**：新增 `gameServerCompiler.ui.autoRevealProblems` 配置，可控制编译错误或警告出现时是否自动弹出 Problems 面板
+- 🧭 **根目录定位更稳**：兼容自动识别到 `duobao` 这类真实 MUD 根目录，而工作区根目录只是上层目录的场景
+- ✍️ **保存自动生成函数声明**：继续保留 1.3.2 的自动声明能力，与自动编译链路无缝衔接
 
 ---
 
@@ -216,8 +217,9 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 快速编译当前文件
 - 支持整个目录编译
 - 保存 `mudlib` 下 `.c` 文件时自动生成函数声明
-- 错误实时提示与定位
-- 点击错误直接跳转
+- 编译错误统一收敛为单条摘要
+- 错误实时提示与 Problems 定位
+- 点击错误直接跳转到具体文件/行/列
 
 ### 💻 命令管理
 - 自定义命令快捷执行
@@ -232,6 +234,17 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 支持消息清理
 - 自定义消息样式
 - 原始数据开关（服务器发来什么就显示什么）
+- 编译过程仅保留必要提示与最终诊断，减少噪音卡片
+
+### 🧭 编译诊断配置
+
+- `gameServerCompiler.ui.autoRevealProblems`
+  - `never`：不自动弹出 Problems
+  - `error`：仅编译错误时自动弹出 Problems
+  - `errorOrWarning`：编译错误或警告时都自动弹出 Problems
+
+> 说明：插件会优先解析 FluffOS 原始诊断头 `/file line N[, column M]: [Warning: ]message`。  
+> 如果 mudlib 额外包了一层中文错误块，插件也会兼容提取出准确的文件、行、列和错误消息，并收敛为一条可点击卡片。
 
 ---
 

@@ -31,8 +31,13 @@ interface Config {
     loginWithEmail?: boolean;
 }
 
+interface MudPathResolution {
+    mudPath: string;
+    usedRootPath: string;
+}
+
 // 修改路径转换方法
-async function convertToMudPath(fullPath: string): Promise<string> {
+async function resolveMudPath(fullPath: string): Promise<MudPathResolution> {
     const config = configManager.getConfig();
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
     try {
@@ -48,11 +53,16 @@ async function convertToMudPath(fullPath: string): Promise<string> {
             );
         }
 
-        return resolved.mudPath;
+        return resolved;
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(detail);
     }
+}
+
+async function convertToMudPath(fullPath: string): Promise<string> {
+    const resolved = await resolveMudPath(fullPath);
+    return resolved.mudPath;
 }
 
 // 检查文件是否可编译
@@ -356,10 +366,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
             try {
                 outputChannel.appendLine(`原始文件路径: ${safeFilePath}`);
-                const mudPath = await convertToMudPath(safeFilePath);
-                outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
-                tcpClient.sendUpdateCommand(mudPath);
-                messageProvider?.addMessage(`正在编译文件: ${mudPath}`);
+                const resolved = await resolveMudPath(safeFilePath);
+                outputChannel.appendLine(`转换后的MUD路径: ${resolved.mudPath}`);
+                tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
+                messageProvider?.addMessage(`🔨 正在编译: ${resolved.mudPath}`);
             } catch (error) {
                 outputChannel.appendLine(`编译文件失败: ${error}`);
                 messageProvider?.addMessage(`编译文件失败: ${error}`);
@@ -417,10 +427,6 @@ export async function activate(context: vscode.ExtensionContext) {
                         });
                     }
 
-                    if (config.compile.showDetails) {
-                        messageProvider?.addMessage(`开始编译目录: ${path}`);
-                    }
-
                     // 设置编译超时
                     const timeout = config.compile.timeout;
                     const timeoutPromise = new Promise((_, reject) => {
@@ -431,9 +437,6 @@ export async function activate(context: vscode.ExtensionContext) {
                     const compilePromise = new Promise<void>((resolve, reject) => {
                         try {
                             tcpClient.sendCustomCommand(`updateall ${path}`);
-                            if (config.compile.showDetails) {
-                                messageProvider?.addMessage(`发送编译目录命令: updateall ${path}`);
-                            }
                             resolve();
                         } catch (error) {
                             reject(error);
@@ -677,10 +680,10 @@ export async function activate(context: vscode.ExtensionContext) {
             
             try {
                 const filePath = document.uri.fsPath;
-                const mudPath = await convertToMudPath(filePath);
-                outputChannel.appendLine(`转换后的MUD路径: ${mudPath}`);
-                messageProvider?.addMessage(`编译文件: ${mudPath}`);
-                tcpClient.sendUpdateCommand(mudPath);
+                const resolved = await resolveMudPath(filePath);
+                outputChannel.appendLine(`转换后的MUD路径: ${resolved.mudPath}`);
+                messageProvider?.addMessage(`🔨 正在编译: ${resolved.mudPath}`);
+                tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
                 outputChannel.appendLine('编译命令已发送');
             } catch (error) {
                 outputChannel.appendLine(`编译失败: ${error}`);

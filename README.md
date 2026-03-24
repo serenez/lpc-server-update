@@ -1,4 +1,4 @@
-# 🎮 LPC服务器连接器
+# 🎮 LPC-Server-UPDATE MUD工具
 
 <div align="center">
 
@@ -6,117 +6,198 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
-一个专业的 VS Code 扩展，为 LPC 游戏开发者提供完整的服务器连接和管理解决方案。
+面向 LPC / MUD 项目的 VS Code 扩展，主要解决两件事：远程 Update，以及用 `lpcc.exe` 先在本地把当前文件编译一遍并直接看到报错位置。
 
-![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
-
-[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.4.0 - 本地 LPCC 工作流与工具面板收敛**
+[🌐 English README](README.en.md) • [📋 版本更新记录](CHANGELOG.md) • [⚙️ 配置文档](CONFIGURATION.md) • [🌏 诊断中文化对照表](COMPILER_DIAGNOSTIC_LOCALIZATION.md)
 
 </div>
 
 ---
 
-推荐LPC语法检查，语法高亮，函数提示等功能插件：[LPC language-server](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)
+## ⭐ 本地 LPCC 编译报错说明
 
-服务端 Update 配置文件位于：`项目根目录/.vscode/muy-lpc-update.json`
+这是当前插件最重要的功能。  
+插件会直接调用当前 mudlib 里的 `lpcc.exe`，编译你现在打开的 `.c` / `.lpc` 文件。编译完以后，错误和警告不会只停留在一段原始文本里，而是会直接出现在编辑器里。
 
-本地 LPCC 的 `lpcc.exe`、`config.ini/config.cfg`、警告提示、保存自动本地编译、诊断语言等项目级设置，保存于当前工作区的 VS Code 设置中（通常是 `.vscode/settings.json`）。
+现在实际能做到的是：
 
-如该插件配置文件不会配置可咨询我。 QQ 279631638
+- 能识别这类标准报错：`/cmds/wiz/testcmd.c line 30, column 3: ...`
+- 错误和警告会同时出现在三个地方：
+  - `服务器监控台` 的报错卡片
+  - VS Code `Problems`
+  - 统一输出栏 `LPC-MUD工具`
+- 点一下报错，就能跳到对应文件、行、列
+- 如果报错落在函数名、变量名这类位置，插件会尽量把**整个名字**标出来，而不是只标 1 个字符
+- 可以自己决定是否显示警告
+- 可以切换成只看中文、只看英文，或者中英双语
+- 可以开启保存后自动本地编译，而且不会在保存时弹窗打断
+- 就算当前焦点在输出栏、Problems 或侧栏，插件也会优先使用你当前还开着的代码文件
 
-该插件已经实现 代码补全、诊断、悬停提示、代码导航、跳转、预览、定义、代码大纲、代码导航、构建任务等功能。且我已贡献该插件中文化实现，可直接使用。
+所以这套本地编译功能，不只是“打印一段英文报错”。  
+它会直接告诉你：**哪一个文件、哪一行、哪一列、是什么问题**，并且可以直接点过去看。
 
-搭配此插件可实现更好的编码体验。
+### ⭐ 建议配合优化后的 FluffOS / LPCC 驱动使用
 
----
+插件能把报错显示得多清楚，前提是驱动先把报错给对。  
+插件不会凭空猜出更准确的列号，也不会自己判断“到底是第几个参数错了”；它主要是把驱动已经给出的文件、行、列、源码行和箭头，整理到 VS Code 里给你看。
 
-## ⚠️ 使用前注意
+所以这里要说明白：
 
-### 🌐 使用环境选择
+- 现在这套插件，已经按**优化版 FluffOS 驱动**的报错格式做过适配
+- 最好的使用效果，要配合下方的优化版驱动
+- 如果继续用旧驱动，插件也能用，但报错位置可能会偏
 
-#### 1️⃣ 与游戏服务器在同一台设备 推荐！⭐️⭐️⭐️⭐️⭐️
-<pre>
-<code class="properties">IP地址设置: localhost 或 127.0.0.1
-适用场景: 直接在游戏服务器上开发
-优势: 最佳性能和稳定性</code>
-</pre>
+配合优化后的驱动后，最直接的区别是：
 
-#### 2️⃣ 与游戏服务器不在同一台设备，但是利用vscode远程SSH连接游戏服务器 推荐⭐️⭐️⭐️⭐️⭐️！ 
-<pre>
-<code class="properties">工具: VS Code Remote-SSH
-IP设置: localhost 或 127.0.0.1
-适用场景: 远程开发但需要本地编辑器体验.
+- 语法错误的行号、列号更稳定
+- 参数类型错误更容易指到**出错的那个参数**
+- 源码行和 `^` 箭头更容易对得上
+- 未声明函数、未定义变量、未使用变量这类问题，位置更容易落对
 
-RemoteSSH 免密登录WindowsServer服务器使用教程：
-  待更新 如需要可咨询作者 QQ 279631638</code>
-</pre>
+如果你准备把这个插件当成日常主力的 LPC 编译报错工具，建议直接配套使用优化后的 FluffOS / LPCC 驱动。
 
-#### 3️⃣ 本地开发环境，与游戏服务器不在同一台设备
-> ⚡ **重要**: 必须确保本地与服务器项目文件保持同步！
-此方法依赖同步速度，太慢的同步速度会因为本地文件修改但是未上传至服务器，导致编译的还是旧文件。
+### ⬇️ 优化版驱动下载
 
-推荐的同步方案：
-- 🔄 **[SFTP](https://marketplace.visualstudio.com/items?itemName=liximomo.sftp)** (推荐)
-  - VS Code插件
-  - 实时文件同步
-  - 简单易用
-- 🔁 **[Syncthing](https://syncthing.net/)**
-  - 跨平台同步工具
-  - 支持双向同步
-  - 开源免费
-
-> 💡 **工作原理说明**：
-> 
-> 本插件通过登录MUD内的巫师账号来执行相关命令。因此，要确保：
-> 1. 在服务器本地使用此插件，或
-> 2. 保证本地文件与服务器文件同步
-> 
-> 否则，即使执行UPDATE命令也无法正确编译文件。
+- [优化版 Windows FluffOS 驱动](http://qn.aimud.cn/driver.exe)
+- [优化版 Windows LPCC](http://qn.aimud.cn/lpcc.exe)
+- Linux 版本不提供现成二进制，请自行从下方 FluffOS 项目源码编译
+- [FluffOS 项目地址（待补充）](https://github.com/serenez/fluffos_Z)
 
 ---
 
-## 📚 文档
+## 当前插件能做什么
 
-深入了解项目的技术细节和开发指南：
+- 连接游戏服务器，支持多配置环境切换。
+- 远程 Update 当前文件、编译目录、发送自定义命令、执行 Eval、重启服务器。
+- 本地调用 `lpcc.exe` 离线编译当前文件，并把错误同步到消息面板、`Problems` 和统一输出栏。
+- 把 FluffOS / mudlib 返回的编译错误整理成可点击提示，并直接跳到对应文件、行、列。
+- 复制当前文件的 MUD 相对路径。
+- 为当前 `.c` 文件生成或刷新 `AUTO DECLARATIONS` 函数声明块。
+- 收藏常用文件并快速打开。
 
-| 文档 | 描述 |
-|------|------|
-| [✅ 当前运行架构（权威）](CURRENT_RUNTIME.md) | 以当前代码为准的主链路与路径转换规则 |
-| [🏗️ 架构文档](ARCHITECTURE.md) | 项目整体架构设计和技术栈说明 |
-| [🔌 API文档](API.md) | 完整的API接口文档和使用说明 |
-| [💻 开发指南](DEVELOPMENT.md) | 开发环境搭建、调试和贡献指南 |
-| [⚙️ 配置文档](CONFIGURATION.md) | 详细的配置选项和参数说明 |
-| [🌏 编译诊断中文化](COMPILER_DIAGNOSTIC_LOCALIZATION.md) | 驱动英文诊断与插件中文提示的完整对照表 |
-| [🧩 模块设计](MODULES.md) | 各功能模块的详细设计文档 |
-| [🧪 测试文档](TESTING.md) | 测试策略和测试用例说明 |
+> 推荐同时安装 [LPC language-server](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)  
+> 用于语法高亮、补全、悬停、定义跳转等编辑体验。本插件本身不负责这些 LSP 能力。
 
 ---
 
-## 🚀 快速开始
+## 适合的使用方式
 
-### 1️⃣ 安装
-1. 打开 VS Code
-2. 按下 `Ctrl+P`
-3. 输入 `ext install BUYI-ZMuy.lpc-server-update`
+### 1. 服务器本机开发
 
-### 2️⃣ 配置
+推荐。  
+插件直接连接本机 MUD 服务端，远程 Update 与本地文件最一致。
 
-#### 新版本格式（V2）- 多配置环境支持
+### 2. VS Code Remote-SSH 连到服务器开发
 
-在 `.vscode/muy-lpc-update.json` 中配置：
+同样推荐。  
+代码、配置和驱动都在服务器侧，远程 Update 与本地 LPCC 编译都更稳定。
 
-<pre>
-<code class="json">{
+### 3. 本地开发，项目与服务器分离
+
+可以使用，但需要你自行保证文件同步。  
+远程 Update 编译的是服务器上的文件，本地 LPCC 编译的是本地磁盘文件；两边不同步时，结果可能不一致。
+
+---
+
+## 当前界面结构
+
+插件在活动栏提供两个视图：
+
+- `📡 服务器监控台`
+- `⚡ 指令控制台`
+
+### 服务器监控台
+
+顶部按钮目前包含：
+
+- `登录KEY`：直接打开 `.vscode/muy-lpc-update.json`
+- `UTF8 / GBK`：切换远程连接编码
+- `登录:含邮箱 / 不含`：切换登录信息是否附带邮箱
+- `原始:开 / 关`：切换是否显示服务器原始消息
+- `🔒 / 🔓`：切换自动滚动
+- `❌`：清空消息
+
+消息面板会显示：
+
+- 普通服务器消息
+- 远程编译状态
+- 本地 LPCC 编译诊断
+- 可点击的编译错误卡片
+
+### 指令控制台
+
+当前布局分成两组：
+
+#### 本地命令
+
+- `本地LPCC编译`
+- `本地LPCC设置`
+- `生成函数声明`
+- `复制相对路径`
+- `常用文件`
+
+#### 远程命令
+
+- `远程Update当前文件`
+- `编译目录`
+- `自定义命令`
+- `自定义Eval`
+- `重启服务器`
+- `连接游戏服务器`
+
+底部还有：
+
+- `配置环境` 选择器
+- `当前配置` 折叠面板
+
+当前配置面板会显示：
+
+- 服务端 Update 配置
+- 服务端 mudlib 目录映射路径
+- 服务端连接地址
+- 当前 LPCC
+- 当前 Config
+- 保存自动本地编译
+- 警告提示
+- 诊断语言
+
+---
+
+## 配置存储位置
+
+插件现在有两类配置，存放位置不同。
+
+### 1. 服务端 Update 配置
+
+保存在：
+
+```text
+.vscode/muy-lpc-update.json
+```
+
+这里负责：
+
+- 多配置环境 `profiles`
+- 当前激活环境 `activeProfile`
+- 远程连接地址、端口、账号、密码
+- `rootPath` 兜底映射路径
+- 远程保存自动编译 `compile.autoCompileOnSave`
+- 自定义命令 / 自定义 Eval / 常用文件
+
+一个最小示例：
+
+```json
+{
   "version": 2,
   "activeProfile": "default",
   "profiles": {
     "default": {
       "name": "本地开发环境",
-      "host": "服务器地址",
-      "port": 端口号,
-      "username": "巫师账号",
-      "password": "密码",
-      "rootPath": "项目根目录",
+      "host": "127.0.0.1",
+      "port": 8080,
+      "username": "wizard",
+      "password": "password",
+      "rootPath": "C:/mud/duobao",
       "serverKey": "buyi-SerenezZmuy",
       "encoding": "UTF8",
       "loginKey": "buyi-ZMuy",
@@ -133,230 +214,261 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
         "retryInterval": 5000,
         "heartbeatInterval": 30000
       }
-    },
-    "remote": {
-      "name": "远程测试服务器",
-      "host": "192.168.1.100",
-      ...
-    }
-  }
-}</code>
-</pre>
-
-#### 多配置环境管理功能
-
-- ⚙️ **配置环境选择器**：在UI中快速切换不同的服务器配置
-- ➕ **添加新配置**：支持添加多个配置环境（本地、测试、生产等）
-- 🔄 **一键切换**：点击"切换"按钮即可切换配置，自动断开当前连接
-- 📝 **自定义配置名称**：可给每个配置设置易识别的名称
-- 🔄 **自动迁移**：旧版本配置会自动迁移到新格式
-- 🧭 **自动识别项目根目录**：优先按 `log/adm/cmds/feature/include/std/inherit` 目录特征识别根目录（命中 >=3）
-- ℹ️ **rootPath 兜底**：`rootPath` 仅作为自动识别失败时的备用路径
-- ✍️ **保存自动生成声明**：`gameServerCompiler.compile.autoDeclareFunctionsOnSave` 属于 VS Code 设置项，默认关闭，需要时可在设置中开启；也可随时点击面板按钮手动刷新当前文件的声明块
-
-<details>
-<summary><b>📖 旧版本格式（V1）自动迁移</b></summary>
-
-如果是旧版本配置，插件会自动迁移到新格式，无需手动修改。
-
-旧格式：
-```json
-{
-  "host": "localhost",
-  "port": 8080,
-  ...
-}
-```
-
-自动迁移后：
-```json
-{
-  "version": 2,
-  "activeProfile": "default",
-  "profiles": {
-    "default": {
-      "name": "默认配置",
-      "host": "localhost",
-      "port": 8080,
-      ...
     }
   }
 }
 ```
-</details>
 
-### 3️⃣ 开始使用
-1. 点击左侧活动栏的 LPC 图标
-2. 点击 "连接游戏服务器"
-3. 开始编码！
+### 2. VS Code 工作区设置
 
-### 🔥 最新改进（1.4.0）
+保存在：
 
-- 🏠 **本地 LPCC 工作流完善**：新增 `gameServerCompiler.localCompile.autoCompileOnSave`，可在保存 `.c/.lpc` 时自动做本地离线编译；该流程为静默模式，仅在 LPCC 和配置文件已明确可用时才执行，不会在保存时弹窗打断
-- ⚙️ **本地 LPCC 设置收口**：`本地LPCC设置` 统一管理当前项目的 `lpcc.exe`、`config.ini/config.cfg`、保存自动本地编译、警告提示和诊断语言，并在底部“当前配置”里实时显示
-- 🌏 **编译诊断支持中英双语**：新增 `gameServerCompiler.diagnostics.messageLanguage`，默认 `dual`；可切换为仅英文或仅中文，统一作用于本地 LPCC、远程编译消息、Problems 与输出摘要
-- 🎯 **编译错误只保留必要提示**：本地与远程编译输出统一收敛到 `LPC-MUD工具`，编译诊断仍保留精准定位，但移除了多余的过程噪音；复制相对路径、生成函数声明等非编译操作只显示结果
-- 🧭 **当前文件不再依赖焦点**：点击输出栏、Problems 或侧栏后，再执行“远程Update当前文件”“本地LPCC编译”“复制相对路径”“生成函数声明”等命令，会优先使用当前可见的代码文件，而不是因为焦点丢失误判
-- 🧩 **工具面板重排**：本地命令与远程命令分组展示，当前配置区域改为折叠展开，`服务端工作目录` 文案也明确改为 `服务端mudlib目录映射路径`
+```text
+.vscode/settings.json
+```
+
+这里负责：
+
+- 本地 LPCC 路径
+- 本地编译配置文件路径
+- 本地编译超时
+- 保存自动本地编译
+- 是否显示警告
+- 诊断语言
+- 消息面板与 UI 行为
+
+常用设置示例：
+
+```json
+{
+  "gameServerCompiler.compile.autoDeclareFunctionsOnSave": false,
+  "gameServerCompiler.localCompile.lpccPath": "duobao/fluffos64/lpcc.exe",
+  "gameServerCompiler.localCompile.configPath": "duobao/config.ini",
+  "gameServerCompiler.localCompile.autoCompileOnSave": false,
+  "gameServerCompiler.localCompile.showWarnings": true,
+  "gameServerCompiler.diagnostics.messageLanguage": "dual",
+  "gameServerCompiler.ui.autoRevealProblems": "error"
+}
+```
 
 ---
 
-## 🛠️ 功能特性
+## 关键工作流
 
-### ⚙️ 多配置环境管理 ⭐ NEW
-- **多服务器配置**：支持同时配置多个服务器环境（本地、测试、生产等）
-- **快速切换**：一键切换不同配置，无需手动修改配置文件
-- **配置隔离**：不同环境的配置完全独立，互不干扰
-- **自动迁移**：旧版本配置自动升级到新格式
-- **智能断连**：切换配置时自动断开当前连接，避免冲突
+## 远程 Update 工作流
 
-### 🔌 服务器连接
-- 一键连接/断开服务器
-- 支持 UTF8/GBK 编码
-- 智能重连机制
-- 实时状态监控
+1. 在 `指令控制台` 里点击 `连接游戏服务器`
+2. 打开目标 `.c` / `.lpc` 文件
+3. 点击 `远程Update当前文件`
+4. 远程返回的编译结果会进入消息面板与 `LPC-MUD工具` 输出栏
 
-### 📝 代码编译
-- 快速远程 Update 当前文件
-- 支持本地 LPCC 编译当前文件
-- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg`、保存自动本地编译、警告提示开关与诊断提示语言
-- 支持整个目录编译
-- 支持一键手动生成当前文件函数声明
-- 可选开启保存时自动生成函数声明（默认关闭）
-- 可选开启保存时自动本地 LPCC 编译（默认关闭，静默执行）
-- 编译错误统一收敛为单条摘要
-- 本地 LPCC 报错会同步进入 Problems，并支持跳转到具体文件/行/列
-- 错误实时提示与 Problems 定位
-- 编译诊断支持英文 / 中文 / 中英双语三种显示模式
-- 点击错误直接跳转到具体文件/行/列
-- 文件相关命令会优先使用当前可见代码文件，不依赖输出栏或侧栏焦点
+补充说明：
 
-### 💻 命令管理
-- 自定义命令快捷执行
-- 支持 Eval 命令
-- 服务器重启管理
-- 实时执行反馈
-- 复制当前文件 MUD 相对路径
+- `compile.autoCompileOnSave` 控制的是远程保存自动编译
+- 它依赖远程连接已建立且角色已登录
+- 远程编译错误会同步成可点击卡片，并可弹出 `Problems`
 
-### 📊 消息系统
-- 分类消息显示
-- 自动滚动/锁定
-- 支持消息清理
-- 自定义消息样式
-- 原始数据开关（服务器发来什么就显示什么）
-- 编译过程仅保留必要提示与最终诊断，减少噪音卡片
-- 常规输出统一收敛到 `LPC-MUD工具` 输出栏
+## 本地 LPCC 工作流
 
-### 🧭 编译诊断配置
+1. 打开当前 mudlib 下的 `.c` / `.lpc` 文件
+2. 点击 `本地LPCC编译`
+3. 首次可通过 `本地LPCC设置` 指定当前项目使用的 `lpcc.exe` 与 `config.ini/config.cfg`
+4. 编译结果会进入消息面板、`Problems` 与 `LPC-MUD工具`
 
+本地 LPCC 的几个重要规则：
+
+- 只扫描**当前文件所属 mudlib** 内的 `lpcc.exe`、`config.ini`、`config.cfg`
+- 手动选择的 LPCC 和 Config 也必须位于**当前 mudlib** 内
+- 保存自动本地编译是**静默模式**
+  - 只在 LPCC / Config 已明确可用时执行
+  - 如果路径失效、没扫到、或者扫到多个候选但你还没手动确认，就会自动跳过
+  - 不会在保存时弹窗打断
+
+## 函数声明工作流
+
+- `生成函数声明`：手动刷新当前 `.c` 文件的 `AUTO DECLARATIONS` 块
+- `gameServerCompiler.compile.autoDeclareFunctionsOnSave`：保存时自动刷新声明块，默认关闭
+
+当前声明逻辑会：
+
+- 回收散落在文件里的匹配声明
+- 统一整理到自动声明块
+- 尽量避免把上一行脏文本误吞进签名
+
+## 文件相关命令的“当前文件”判定
+
+当前这些命令都不再强依赖编辑器焦点：
+
+- `远程Update当前文件`
+- `本地LPCC编译`
+- `复制相对路径`
+- `生成函数声明`
+- `本地LPCC设置`
+
+如果焦点已经切到输出栏、`Problems`、消息面板或侧栏，插件会优先回退到最近一个仍然可见的代码文件，而不是直接报“只能编译 .c 或 .lpc 文件”。
+
+---
+
+## 编译诊断与输出
+
+### 统一输出栏
+
+常规输出只保留一个：
+
+```text
+LPC-MUD工具
+```
+
+它会承载：
+
+- 远程编译摘要
+- 本地 LPCC 编译摘要
+- 复制路径结果
+- 函数声明结果
+- 其他必要插件日志
+
+### Problems 集成
+
+本地 LPCC 与远程编译诊断都会写入 `Problems`。
+
+相关设置：
+
+- `gameServerCompiler.ui.autoRevealProblems = never`
+- `gameServerCompiler.ui.autoRevealProblems = error`
+- `gameServerCompiler.ui.autoRevealProblems = errorOrWarning`
+
+### 诊断语言
+
+`gameServerCompiler.diagnostics.messageLanguage` 支持三种模式：
+
+- `dual`：中英双语
+- `en`：仅英文
+- `zh`：仅中文
+
+它会同时影响：
+
+- 本地 LPCC 编译消息
+- 远程编译消息
+- 消息面板错误卡片
+- `Problems`
+- 输出摘要
+
+### 原始服务器消息
+
+`原始:开 / 关` 可以控制是否直接显示服务器原始返回文本。  
+这个开关适合协议排查，不建议日常长期打开。
+
+---
+
+## 重要设置项速查
+
+### 远程编译与声明
+
+- `gameServerCompiler.compile.autoCompileOnSave`
+  - 保存时自动执行远程 Update
+- `gameServerCompiler.compile.autoDeclareFunctionsOnSave`
+  - 保存时自动刷新函数声明块
+
+### 本地 LPCC
+
+- `gameServerCompiler.localCompile.lpccPath`
+- `gameServerCompiler.localCompile.configPath`
+- `gameServerCompiler.localCompile.timeout`
+- `gameServerCompiler.localCompile.autoCompileOnSave`
+- `gameServerCompiler.localCompile.showWarnings`
+
+### 诊断与 UI
+
+- `gameServerCompiler.diagnostics.messageLanguage`
 - `gameServerCompiler.ui.autoRevealProblems`
-  - `never`：不自动弹出 Problems
-  - `error`：仅编译错误时自动弹出 Problems
-  - `errorOrWarning`：编译错误或警告时都自动弹出 Problems
+- `gameServerCompiler.messages.showRawData`
+- `gameServerCompiler.messages.autoScroll`
+- `gameServerCompiler.messages.maxCount`
 
-> 说明：插件会优先解析 FluffOS 原始诊断头 `/file line N[, column M]: [Warning: ]message`。  
-> 如果 mudlib 额外包了一层中文错误块，插件也会兼容提取出准确的文件、行、列和错误消息，并收敛为一条可点击卡片。
-
----
-
-## 🔒 安全注意事项
-
-- 🚫 禁止在公共场合分享配置文件
-- 📝 建议将 `muy-lpc-update.json` 添加到 `.gitignore`
-- 🔑 定期更改密码和验证密钥
-- 🛡️ 确保服务器端口的安全性
+完整配置说明请看：[CONFIGURATION.md](CONFIGURATION.md)
 
 ---
 
-## 🤝 贡献指南
+## 命令一览
 
-欢迎贡献代码、报告问题或提出改进建议！
+当前扩展公开命令包括：
 
-1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 提交 Pull Request
+- `连接游戏服务器`
+- `远程Update当前文件`
+- `本地LPCC编译当前文件`
+- `本地LPCC设置`
+- `复制当前文件相对路径`
+- `生成当前文件函数声明`
+- `编译目录`
+- `发送自定义命令`
+- `重启服务器`
+- `显示性能报告`
+- `重置性能指标`
+- `切换配置环境`
 
-详细的开发指南请参考：[💻 开发指南](DEVELOPMENT.md)
-
----
-
-## ❓ 常见问题
-
-<details>
-<summary><b>⚙️ 多配置环境管理</b></summary>
-
-**Q: 如何添加新的服务器配置？**
-A: 在配置环境选择器中选择"➕ 添加新配置..."，输入配置名称即可
-
-**Q: 如何切换配置？**
-A: 在下拉菜单中选择配置，然后点击"切换"按钮
-
-**Q: 切换配置会影响现有连接吗？**
-A: 会。如果已连接服务器，切换配置前会自动断开连接
-
-**Q: 旧版本的配置怎么办？**
-A: 插件会自动迁移到新格式，无需手动修改
-</details>
-
-<details>
-<summary><b>🔌 连接失败</b></summary>
-
-1. 检查服务器地址和端口
-2. 确认网络连接
-3. 验证登录信息
-4. 确认当前使用的配置环境是否正确
-</details>
-
-<details>
-<summary><b>⚠️ 编译错误</b></summary>
-
-1. 检查文件路径
-2. 查看错误信息
-3. 确认编码设置
-4. 确认文件位于项目目录中（插件会自动识别项目根目录）
-5. 若自动识别失败，再检查配置中的 `rootPath` 兜底项
-</details>
-
-<details>
-<summary><b>📝 中文乱码</b></summary>
-
-1. 检查编码设置
-2. 切换到 GBK 编码
-3. 重新连接服务器
-</details>
-
-<details>
-<summary><b>💾 配置文件未更新</b></summary>
-
-1. 检查是否保存了配置文件
-2. 配置修改后会立即生效，无需重新加载窗口
-3. 如果仍有问题，尝试重新加载VS Code窗口
-</details>
+其中部分命令在控制台按钮中可直接点击，部分更适合通过命令面板使用。
 
 ---
 
-## 📞 联系方式
+## 文档
 
-- 📧 Email: 279631638@qq.com
-- 💬 QQ: 279631638
-- 🐛 Issues: [GitHub Issues](https://github.com/serenez/lpc-server-update/issues)
+- [✅ 当前运行架构（权威）](CURRENT_RUNTIME.md)
+- [🏗️ 架构文档](ARCHITECTURE.md)
+- [🔌 API 文档](API.md)
+- [💻 开发指南](DEVELOPMENT.md)
+- [⚙️ 配置文档](CONFIGURATION.md)
+- [🌏 编译诊断中文化](COMPILER_DIAGNOSTIC_LOCALIZATION.md)
+- [🧩 模块设计](MODULES.md)
+- [🧪 测试文档](TESTING.md)
 
 ---
 
-## 📄 许可证
+## 开发与验证
 
-[MIT License](LICENSE) © 2024 不一
+```bash
+npm install
+npm run compile
+npm run lint
+node --test dist/**/*.test.js
+```
 
 ---
 
-<div align="center">
+## 常见问题
 
-### 如果这个插件对你有帮助，欢迎给个 ⭐️！
+### 1. 本地 LPCC 自动编译没有触发
 
-<a href="https://github.com/serenez/lpc-server-update">
-  <img src="https://img.shields.io/github/stars/serenez/lpc-server-update?style=social" alt="GitHub stars">
-</a>
+优先检查：
 
-</div>
+- `gameServerCompiler.localCompile.autoCompileOnSave` 是否开启
+- 当前文件是否属于可识别的 mudlib
+- 当前 mudlib 内的 `lpcc.exe` 与 `config.ini/config.cfg` 是否已明确可用
+- 是否存在多个候选路径但尚未手动确认
+
+### 2. 远程 Update 编译的不是最新本地代码
+
+说明服务器上的文件和本地文件没有同步。  
+远程 Update 始终编译服务器侧文件，不会自动上传本地改动。
+
+### 3. 为什么本地编译能报错，但远程没有
+
+本地 LPCC 与远程驱动是两条链路。  
+本地编译用于离线快速验证，远程编译反映的是服务器当前代码与运行环境。
+
+### 4. 为什么点了输出栏后再编译，还是能找到当前文件
+
+这是现在的设计行为。  
+插件会优先使用最近一个可见的代码文件，而不是严格依赖焦点。
+
+---
+
+## 联系方式
+
+- QQ：279631638
+- Issues：[GitHub Issues](https://github.com/serenez/lpc-server-update/issues)
+
+---
+
+## 许可证
+
+[MIT License](LICENSE) © 2026 不一

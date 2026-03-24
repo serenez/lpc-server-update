@@ -57,13 +57,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         console.log('ButtonProvider constructor called');
         this._outputChannel = createSilentOutputChannel();
         this._configManager = ConfigManager.getInstance(); // 🚀 获取配置管理器实例
-        this._configManager.onConfigChanged(() => {
+        this._disposables.push(this._configManager.onConfigChanged(() => {
             this.loadCustomCommands();
             this.updateView();
-        });
-        this._configManager.onProfileChanged(() => {
+        }));
+        this._disposables.push(this._configManager.onProfileChanged(() => {
             this.updateView();
-        });
+        }));
         this.initializeAsync();
     }
 

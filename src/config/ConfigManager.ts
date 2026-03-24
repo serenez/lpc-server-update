@@ -264,8 +264,11 @@ export class ConfigManager {
     /**
      * 🚀 监听配置切换事件
      */
-    onProfileChanged(listener: (event: {oldProfile: string, newProfile: string}) => void): void {
+    onProfileChanged(listener: (event: {oldProfile: string, newProfile: string}) => void): vscode.Disposable {
         this.profileEventEmitter.on('profileChanged', listener);
+        return new vscode.Disposable(() => {
+            this.profileEventEmitter.removeListener('profileChanged', listener);
+        });
     }
 
     /**
@@ -290,8 +293,11 @@ export class ConfigManager {
     }
 
     // 监听配置变化
-    onConfigChanged(listener: (event: {oldConfig: Config, newConfig: Config}) => void): void {
+    onConfigChanged(listener: (event: {oldConfig: Config, newConfig: Config}) => void): vscode.Disposable {
         this.eventEmitter.on('configChanged', listener);
+        return new vscode.Disposable(() => {
+            this.eventEmitter.removeListener('configChanged', listener);
+        });
     }
 
     private cloneValue<T>(value: T): T {
@@ -507,6 +513,10 @@ export class ConfigManager {
         const logger = LogManager.getInstance();
 
         try {
+            const previousSnapshot = this.getConfigSnapshot();
+            const oldProfileId = previousSnapshot.activeProfile;
+            const oldConfig = this.getConfig();
+
             // 读取文件
             const configData = fs.readFileSync(this.configPath, 'utf8');
             if (!configData || configData.trim() === '') {
@@ -559,12 +569,12 @@ export class ConfigManager {
             }
 
             // 更新配置
-            const oldProfileId = this.config.activeProfile;
-            const oldConfig = this.getConfig();
             this.config = migratedConfig;
+            const hasStructuralChange =
+                JSON.stringify(previousSnapshot) !== JSON.stringify(migratedConfig);
 
             // 记录变化的配置项
-            if (changes.length > 0) {
+            if (hasStructuralChange) {
                 changes.forEach(change => {
                     logger.log(change, LogLevel.INFO);
                 });
@@ -664,5 +674,8 @@ export class ConfigManager {
             fs.unwatchFile(this.configPath);
             this.isWatchingConfig = false;
         }
+
+        this.eventEmitter.removeAllListeners();
+        this.profileEventEmitter.removeAllListeners();
     }
-} 
+}

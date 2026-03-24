@@ -108,3 +108,55 @@ test('config manager source serializes saves and awaits vscode config sync write
     assert.match(source, /private async syncVSCodeConfig\(\): Promise<void>/);
     assert.match(source, /await this\.updateConfig\(/);
 });
+
+test('config manager source treats structural file config differences as reload changes', () => {
+    const source = readSource('config/ConfigManager.ts');
+
+    assert.match(source, /const previousSnapshot = this\.getConfigSnapshot\(\)/);
+    assert.match(
+        source,
+        /const hasStructuralChange =\s*JSON\.stringify\(previousSnapshot\)\s*!==\s*JSON\.stringify\(migratedConfig\)/
+    );
+    assert.match(source, /if \(hasStructuralChange\)/);
+    assert.doesNotMatch(source, /if \(changes\.length > 0\)/);
+});
+
+test('config subscriptions are disposable and cleaned up by long-lived services', () => {
+    const configManagerSource = readSource('config/ConfigManager.ts');
+    const buttonProviderSource = readSource('buttonProvider.ts');
+    const tcpClientSource = readSource('tcpClient.ts');
+
+    assert.match(
+        configManagerSource,
+        /onConfigChanged\(listener: .*?\): vscode\.Disposable/
+    );
+    assert.match(
+        configManagerSource,
+        /onProfileChanged\(listener: .*?\): vscode\.Disposable/
+    );
+    assert.match(
+        configManagerSource,
+        /return new vscode\.Disposable\(\(\) => \{\s*this\.eventEmitter\.removeListener\('configChanged', listener\);?\s*\}\)/
+    );
+    assert.match(
+        configManagerSource,
+        /return new vscode\.Disposable\(\(\) => \{\s*this\.profileEventEmitter\.removeListener\('profileChanged', listener\);?\s*\}\)/
+    );
+    assert.match(configManagerSource, /this\.eventEmitter\.removeAllListeners\(\)/);
+    assert.match(configManagerSource, /this\.profileEventEmitter\.removeAllListeners\(\)/);
+
+    assert.match(
+        buttonProviderSource,
+        /this\._disposables\.push\(this\._configManager\.onConfigChanged\(\(\) =>/
+    );
+    assert.match(
+        buttonProviderSource,
+        /this\._disposables\.push\(this\._configManager\.onProfileChanged\(\(\) =>/
+    );
+
+    assert.match(tcpClientSource, /private configDisposables: vscode\.Disposable\[] = \[];/);
+    assert.match(tcpClientSource, /this\.configDisposables\.push\(this\.configManager\.onProfileChanged\(/);
+    assert.match(tcpClientSource, /this\.configDisposables\.push\(this\.configManager\.onConfigChanged\(/);
+    assert.match(tcpClientSource, /this\.configDisposables\.push\(vscode\.workspace\.onDidChangeConfiguration\(/);
+    assert.match(tcpClientSource, /this\.configDisposables\.forEach\(d => d\.dispose\(\)\);/);
+});

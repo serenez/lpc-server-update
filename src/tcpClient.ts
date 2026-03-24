@@ -90,6 +90,7 @@ export class TcpClient implements IDisposable {
     private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
     private diagnosticCollection: vscode.DiagnosticCollection | null = null;
     private configManager: ConfigManager;
+    private configDisposables: vscode.Disposable[] = [];
     private readonly resolveDiagnosticLineText = createFileLineTextResolver();
     private firstErrorFile: string = '';
     private errorLine: number = 0;
@@ -130,23 +131,23 @@ export class TcpClient implements IDisposable {
         this.config = vscode.workspace.getConfiguration('gameServerCompiler');
 
         // 🚀 监听配置切换事件
-        this.configManager.onProfileChanged((event) => {
+        this.configDisposables.push(this.configManager.onProfileChanged((event) => {
             this.log(`配置已切换: ${event.oldProfile} -> ${event.newProfile}`, LogLevel.INFO);
             this.updateEncoding();
             if (this.isConnected()) {
                 this.log('配置已切换，断开连接', LogLevel.INFO);
                 this.disconnect();
             }
-        });
-        this.configManager.onConfigChanged(() => {
+        }));
+        this.configDisposables.push(this.configManager.onConfigChanged(() => {
             this.updateEncoding();
-        });
+        }));
 
-        vscode.workspace.onDidChangeConfiguration(e => {
+        this.configDisposables.push(vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('gameServerCompiler.connection')) {
                 this.config = vscode.workspace.getConfiguration('gameServerCompiler');
             }
-        });
+        }));
 
         // 🚀 性能优化：初始化环形缓冲区（容量1000条消息）
         const maxMessages = this.config.get<number>('messages.maxCount', 1000);
@@ -1671,6 +1672,9 @@ export class TcpClient implements IDisposable {
         if (this.messageDeduplicator) {
             this.messageDeduplicator.clear();
         }
+
+        this.configDisposables.forEach(d => d.dispose());
+        this.configDisposables = [];
     }
 
     private showCompileError(

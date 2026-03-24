@@ -1326,8 +1326,8 @@ async function maybeRemoteAutoCompileOnSave(document: vscode.TextDocument): Prom
     try {
         const filePath = document.uri.fsPath;
         const resolved = await resolveMudPath(filePath);
+        await tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
         messageProvider?.addMessage(`🔨 正在编译: ${resolved.mudPath}`);
-        tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
     } catch (error) {
         messageProvider?.addMessage(`编译失败: ${error}`);
     }
@@ -1497,12 +1497,20 @@ export async function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(`工作区: ${workspaceRoot || '未知'}`);
     outputChannel.appendLine('==========================================');
 
+    // 初始化配置管理器
+    try {
+        configManager = ConfigManager.getInstance();
+    } catch (error) {
+        outputChannel.appendLine(`配置初始化失败: ${error}`);
+        return;
+    }
+
     // 创建视图提供者
     messageProvider = new MessageProvider(context.extensionUri);
     buttonProvider = new ButtonProvider(context.extensionUri, messageProvider);
-    
+
     messageProvider.addMessage('正在初始化插件...');
-    
+
     // 注册视图提供者
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('game-server-messages', messageProvider, {
@@ -1523,15 +1531,6 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         })
     );
-
-    // 初始化配置管理器
-    try {
-        configManager = ConfigManager.getInstance();
-    } catch (error) {
-        outputChannel.appendLine(`配置初始化失败: ${error}`);
-        messageProvider.addMessage(`配置初始化失败: ${error}`);
-        return;
-    }
 
     if (workspaceRoot) {
         await normalizeStoredLocalCompilePathsIfNeeded(workspaceRoot);
@@ -1619,7 +1618,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
             try {
                 const resolved = await resolveMudPath(safeFilePath);
-                tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
+                await tcpClient.sendUpdateCommand(resolved.mudPath, resolved.usedRootPath);
                 messageProvider?.addMessage(`🔨 正在编译: ${resolved.mudPath}`);
             } catch (error) {
                 messageProvider?.addMessage(`编译文件失败: ${error}`);
@@ -1759,18 +1758,8 @@ export async function activate(context: vscode.ExtensionContext) {
                         setTimeout(() => reject(new Error('编译超时')), timeout);
                     });
 
-                    // 执行编译命令
-                    const compilePromise = new Promise<void>((resolve, reject) => {
-                        try {
-                            tcpClient.sendCustomCommand(`updateall ${path}`);
-                            resolve();
-                        } catch (error) {
-                            reject(error);
-                        }
-                    });
-
                     // 使用Promise.race来处理超时
-                    await Promise.race([compilePromise, timeoutPromise]);
+                    await Promise.race([tcpClient.sendCustomCommand(`updateall ${path}`), timeoutPromise]);
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : String(error);
                     outputChannel.appendLine(`编译目录失败: ${errorMessage}`);
@@ -1790,7 +1779,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 // 如果传入了command参数,直接执行
                 if (command) {
                     outputChannel.appendLine(`发送命令: ${command}`);
-                    tcpClient.sendCustomCommand(command);
+                    await tcpClient.sendCustomCommand(command);
                     messageProvider?.addMessage(`发送命令: ${command}`);
                     return;
                 }
@@ -1804,7 +1793,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
                 if (inputCommand) {
                     outputChannel.appendLine(`发送命令: ${inputCommand}`);
-                    tcpClient.sendCustomCommand(inputCommand);
+                    await tcpClient.sendCustomCommand(inputCommand);
                     messageProvider?.addMessage(`发送命令: ${inputCommand}`);
                 }
             } catch (error) {
@@ -1824,7 +1813,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 // 如果传入了code参数,直接执行
                 if (code) {
                     outputChannel.appendLine(`执行Eval: ${code}`);
-                    tcpClient.sendEvalCommand(code);
+                    await tcpClient.sendEvalCommand(code);
                     messageProvider?.addMessage(`执行Eval: ${code}`);
                     return;
                 }
@@ -1838,7 +1827,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
                 if (inputCode) {
                     outputChannel.appendLine(`执行Eval: ${inputCode}`);
-                    tcpClient.sendEvalCommand(inputCode);
+                    await tcpClient.sendEvalCommand(inputCode);
                     messageProvider?.addMessage(`执行Eval: ${inputCode}`);
                 }
             } catch (error) {
@@ -1864,7 +1853,7 @@ export async function activate(context: vscode.ExtensionContext) {
             if (confirm === '确定') {
                 try {
                     outputChannel.appendLine('发送重启命令');
-                    tcpClient.sendRestartCommand();
+                    await tcpClient.sendRestartCommand();
                     messageProvider?.addMessage('已发送重启命令');
                     vscode.window.showInformationMessage('已发送重启命令');
                 } catch (error) {
@@ -1988,6 +1977,8 @@ export function deactivate() {
         if (tcpClient?.isConnected()) {
             tcpClient.disconnect();
         }
+        tcpClient?.dispose();
+        buttonProvider?.dispose();
         messageProvider?.dispose();
         configManager?.dispose();
         console.log('插件停用完成');

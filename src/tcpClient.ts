@@ -91,6 +91,7 @@ export class TcpClient implements IDisposable {
     private diagnosticCollection: vscode.DiagnosticCollection | null = null;
     private configManager: ConfigManager;
     private configDisposables: vscode.Disposable[] = [];
+    private connectPromise: Promise<void> | null = null;
     private readonly resolveDiagnosticLineText = createFileLineTextResolver();
     private firstErrorFile: string = '';
     private errorLine: number = 0;
@@ -581,7 +582,9 @@ export class TcpClient implements IDisposable {
                 if (match) {
                     const dependencyFile = match[1].trim();
                     this.log(`检测到依赖文件更新: ${dependencyFile}`, LogLevel.INFO);
-                    this.sendUpdateCommand(dependencyFile);
+                    void this.sendUpdateCommand(dependencyFile).catch(error => {
+                        this.log(`处理依赖文件编译失败: ${error}`, LogLevel.ERROR);
+                    });
                 }
             } else if (cleanedMessage.startsWith('ver')) {
                 this.log('收到服务器连接成功信号', LogLevel.INFO);
@@ -622,7 +625,9 @@ export class TcpClient implements IDisposable {
                 break;
             case '014':
                 this.log(`收到014协议消息: ${cleanedContent}`, LogLevel.DEBUG);
-                this.sendCommand(cleanedContent);
+                void this.sendCommand(cleanedContent).catch(error => {
+                    this.log(`执行014协议命令失败: ${error}`, LogLevel.ERROR);
+                });
                 break;
             case '015':
                 if (isRemoteCompileSuccessMessage(cleanedContent)) {
@@ -800,8 +805,10 @@ export class TcpClient implements IDisposable {
         }
 
         this.reconnectTimer = setInterval(async () => {
-            if (this.connected) {
-                this.stopReconnect();
+            if (this.connected || this.connectPromise) {
+                if (this.connected) {
+                    this.stopReconnect();
+                }
                 return;
             }
 
@@ -837,30 +844,35 @@ export class TcpClient implements IDisposable {
             return;
         }
 
+        if (this.connectPromise) {
+            return this.connectPromise;
+        }
+
         // 🚀 性能监控：开始计时
         const endTimer = this.performanceMonitor.start('connect');
 
-        return new Promise((resolve, reject) => {
-        try {
-            this.lastHost = host;
-            this.lastPort = port;
-            this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
-            
-            this.initSocket();
+        const connectTask = (async () => {
+            let timeoutId: NodeJS.Timeout | null = null;
+            try {
+                this.lastHost = host;
+                this.lastPort = port;
+                this.log(`正在连接到 ${host}:${port}`, LogLevel.INFO);
+
+                this.initSocket();
 
                 const timeout = this.config.get<number>('connection.timeout', 10000);
                 const timeoutPromise = new Promise<void>((_, reject) => {
-                    setTimeout(() => reject(new Error('连接超时')), timeout);
+                    timeoutId = setTimeout(() => reject(new Error('连接超时')), timeout);
                 });
 
-                const connectPromise = new Promise<void>((resolve, reject) => {
-                this.socket?.once('error', (err) => {
+                const socketConnectPromise = new Promise<void>((resolve, reject) => {
+                    this.socket?.once('error', (err) => {
                         this.log(`连接错误: ${err.message}`, LogLevel.ERROR);
-                    reject(err);
-                });
+                        reject(err);
+                    });
 
                     const isLocalhost = host === 'localhost' || host === '127.0.0.1';
-                    
+
                     if (isLocalhost) {
                         this.log('检测到本地回环地址，尝试使用实际IP', LogLevel.INFO);
                         this.socket?.connect(port, '127.0.0.1', () => {
@@ -877,24 +889,25 @@ export class TcpClient implements IDisposable {
                     }
                 });
 
-                Promise.race([connectPromise, timeoutPromise])
-                    .then(() => {
-                        this.log('连接成功，等待服务器响应', LogLevel.INFO);
-                        endTimer(); // 🚀 性能监控：结束计时
-                        resolve();
-                    })
-                    .catch((error) => {
-                        endTimer(); // 🚀 性能监控：结束计时
-                        this.handleConnectionError(error);
-                        reject(error);
-                    });
+                await Promise.race([socketConnectPromise, timeoutPromise]);
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                this.log('连接成功，等待服务器响应', LogLevel.INFO);
+            } catch (error) {
+                this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
+                throw error;
+            } finally {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                endTimer();
+                this.connectPromise = null;
+            }
+        })();
 
-        } catch (error) {
-            endTimer(); // 🚀 性能监控：结束计时
-            this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
-                reject(error);
-        }
-        });
+        this.connectPromise = connectTask;
+        return connectTask;
     }
 
     private async sendKey() {
@@ -978,7 +991,7 @@ export class TcpClient implements IDisposable {
         }
     }
 
-    private async sendCommand(command: string, commandName: string = '命令') {
+    private async sendCommand(command: string, commandName: string = '命令'): Promise<void> {
         if (!this.checkState()) {
             return;
         }
@@ -1007,6 +1020,7 @@ export class TcpClient implements IDisposable {
                 this.log(errorMessage, LogLevel.ERROR);
                 this.messageProvider?.addMessage(`❌ ${errorMessage}`);
             }
+            throw error;
         }
     }
 
@@ -1048,20 +1062,11 @@ export class TcpClient implements IDisposable {
 
             this.clearDiagnostics();
 
-            const compilePromise = new Promise<void>((resolve, reject) => {
-                try {
-                    this.sendCommand(command, '编译命令');
-                    resolve();
-                } catch (error) {
-                    reject(error);
-                }
-            });
-
             const timeoutPromise = new Promise<void>((_, reject) => {
                 setTimeout(() => reject(new Error('编译超时')), timeout);
             });
 
-            await Promise.race([compilePromise, timeoutPromise]);
+            await Promise.race([this.sendCommand(command, '编译命令'), timeoutPromise]);
             
             if (showDetails) {
                 this.log('编译命令发送完成', LogLevel.INFO);
@@ -1606,8 +1611,19 @@ export class TcpClient implements IDisposable {
             const buffer = this.encodeMessage(command);
             this.outputChannel.appendLine(`编码后长度: ${buffer.length}`);
             this.outputChannel.appendLine(`编码后内容: ${buffer.toString('hex')}`);
-            
-            this.socket?.write(buffer);
+
+            await new Promise<void>((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error('未建立TCP连接'));
+                    return;
+                }
+
+                try {
+                    this.socket.write(buffer, () => resolve());
+                } catch (error) {
+                    reject(error);
+                }
+            });
             this.log(`发送自定义命令: ${command}`, LogLevel.INFO);
         } catch (error) {
             this.outputChannel.appendLine(`发送自定义命令失败: ${error}`);
@@ -1629,7 +1645,7 @@ export class TcpClient implements IDisposable {
             return;
         }
         this.log('🔄 发送重启命令', LogLevel.INFO);
-        this.sendCommand('shutdown', '重启命令');
+        await this.sendCommand('shutdown', '重启命令');
     }
 
     /**
@@ -1884,7 +1900,7 @@ export class TcpClient implements IDisposable {
             return;
         }
         this.log(`⚡ 执行代码: ${code}`, LogLevel.DEBUG);
-        this.sendCommand(`eval ${code}`, 'Eval命令');
+        await this.sendCommand(`eval ${code}`, 'Eval命令');
     }
 
     // 添加状态重置方法

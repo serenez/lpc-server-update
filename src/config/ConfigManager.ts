@@ -52,7 +52,7 @@ export interface ConfigAuxiliaryData {
 export type Config = Profile;
 
 export class ConfigManager {
-    private static instance: ConfigManager;
+    private static instance: ConfigManager | undefined;
     private eventEmitter: EventEmitter;
     private profileEventEmitter: EventEmitter; // 🚀 新增：配置切换事件
     private configPath: string;
@@ -677,5 +677,6 @@ export class ConfigManager {
 
         this.eventEmitter.removeAllListeners();
         this.profileEventEmitter.removeAllListeners();
+        ConfigManager.instance = undefined;
     }
 }

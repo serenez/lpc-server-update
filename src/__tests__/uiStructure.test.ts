@@ -160,3 +160,63 @@ test('config subscriptions are disposable and cleaned up by long-lived services'
     assert.match(tcpClientSource, /this\.configDisposables\.push\(vscode\.workspace\.onDidChangeConfiguration\(/);
     assert.match(tcpClientSource, /this\.configDisposables\.forEach\(d => d\.dispose\(\)\);/);
 });
+
+test('source awaits async command senders instead of fire-and-forget invocation', () => {
+    const extensionSource = readSource('extension.ts');
+    const tcpClientSource = readSource('tcpClient.ts');
+
+    assert.equal(
+        (extensionSource.match(/await tcpClient\.sendUpdateCommand\(resolved\.mudPath, resolved\.usedRootPath\);/g) ?? []).length,
+        2
+    );
+    assert.match(extensionSource, /await tcpClient\.sendCustomCommand\(command\);/);
+    assert.match(extensionSource, /await tcpClient\.sendCustomCommand\(inputCommand\);/);
+    assert.match(extensionSource, /await tcpClient\.sendEvalCommand\(code\);/);
+    assert.match(extensionSource, /await tcpClient\.sendEvalCommand\(inputCode\);/);
+    assert.match(extensionSource, /await tcpClient\.sendRestartCommand\(\);/);
+    assert.match(
+        extensionSource,
+        /Promise\.race\(\[tcpClient\.sendCustomCommand\(`updateall \$\{path\}`\), timeoutPromise\]\)/
+    );
+    assert.match(
+        tcpClientSource,
+        /public async sendCustomCommand\(command: string\): Promise<void>[\s\S]*await new Promise<void>\(\(resolve, reject\) =>/
+    );
+    assert.match(
+        tcpClientSource,
+        /private async sendCommand\(command: string, commandName: string = '命令'\)[\s\S]*throw error;/
+    );
+    assert.match(
+        tcpClientSource,
+        /public async sendRestartCommand\(\): Promise<void>[\s\S]*await this\.sendCommand\('shutdown', '重启命令'\);/
+    );
+    assert.match(
+        tcpClientSource,
+        /public async eval\(code: string\)[\s\S]*await this\.sendCommand\(`eval \$\{code\}`, 'Eval命令'\);/
+    );
+    assert.match(tcpClientSource, /void this\.sendUpdateCommand\(dependencyFile\)\.catch\(/);
+    assert.match(tcpClientSource, /void this\.sendCommand\(cleanedContent\)\.catch\(/);
+});
+
+test('extension lifecycle source disposes long-lived services and initializes config before button provider', () => {
+    const extensionSource = readSource('extension.ts');
+    const configManagerSource = readSource('config/ConfigManager.ts');
+    const configManagerIndex = extensionSource.indexOf('configManager = ConfigManager.getInstance();');
+    const buttonProviderIndex = extensionSource.indexOf('buttonProvider = new ButtonProvider');
+
+    assert.notEqual(configManagerIndex, -1);
+    assert.notEqual(buttonProviderIndex, -1);
+    assert.ok(configManagerIndex < buttonProviderIndex, 'config manager should initialize before button provider');
+    assert.match(extensionSource, /tcpClient\?\.dispose\(\);/);
+    assert.match(extensionSource, /buttonProvider\?\.dispose\(\);/);
+    assert.match(configManagerSource, /private static instance: ConfigManager \| undefined;/);
+    assert.match(configManagerSource, /ConfigManager\.instance = undefined;/);
+});
+
+test('tcp client source prevents overlapping reconnect attempts', () => {
+    const tcpClientSource = readSource('tcpClient.ts');
+
+    assert.match(tcpClientSource, /private connectPromise: Promise<void> \| null = null;/);
+    assert.match(tcpClientSource, /if \(this\.connectPromise\) \{\s*return this\.connectPromise;\s*\}/);
+    assert.match(tcpClientSource, /if \(this\.connected \|\| this\.connectPromise\) \{/);
+});

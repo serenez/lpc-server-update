@@ -13,7 +13,7 @@ A VS Code extension for LPC / MUD projects, mainly built for two jobs: remote up
 </div>
 
 ---
-
+![0mo98-02eoc.gif](https://imgtolinkx.com/i/3E8eKvZs)
 ## ⭐ Local LPCC Compile Error Reporting
 
 This is the main feature of the extension.

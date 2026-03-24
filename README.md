@@ -13,7 +13,7 @@
 </div>
 
 ---
-
+![0mo98-02eoc.gif](https://imgtolinkx.com/i/3E8eKvZs)
 ## ⭐ 本地 LPCC 编译报错说明
 
 这是当前插件最重要的功能。  

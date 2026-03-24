@@ -36,6 +36,11 @@ import {
     formatCompilerDiagnosticMessage,
     normalizeCompilerDiagnosticMessageLanguage
 } from './utils/compilerDiagnosticLocalization';
+import {
+    buildCompileOutputFinishLines,
+    buildCompileOutputProgressDiagnosticLine,
+    buildCompileOutputStartLines
+} from './utils/compileOutput';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -54,6 +59,7 @@ export class TcpClient implements IDisposable {
     private versionVerified: boolean = false;
     private isFirstData: boolean = true;
     private outputChannel: vscode.OutputChannel;
+    private compileOutputChannel: vscode.OutputChannel;
     private buttonProvider: ButtonProvider;
     private messageProvider: any;
     private reconnectTimer: NodeJS.Timeout | null = null;
@@ -90,6 +96,7 @@ export class TcpClient implements IDisposable {
     private firstErrorFile: string = '';
     private errorLine: number = 0;
     private errorMessage: string = '';
+    private currentCompileMudPath: string | null = null;
     private currentCompileRootPath: string | null = null;
     private compilerMessageFilterState: CompilerMessageFilterState = {
         awaitingSourceLine: false,
@@ -113,10 +120,12 @@ export class TcpClient implements IDisposable {
 
     constructor(
         outputChannel: vscode.OutputChannel,
+        compileOutputChannel: vscode.OutputChannel,
         buttonProvider: ButtonProvider,
         messageProvider: any
     ) {
         this.outputChannel = outputChannel;
+        this.compileOutputChannel = compileOutputChannel;
         this.buttonProvider = buttonProvider;
         this.messageProvider = messageProvider;
         this.configManager = ConfigManager.getInstance();
@@ -334,6 +343,7 @@ export class TcpClient implements IDisposable {
             if (mudlibFallbackResult.emittedDiagnostic) {
                 const diagnostic = mudlibFallbackResult.emittedDiagnostic;
                 const languageMode = this.getCompilerDiagnosticLanguageMode();
+                const summary = formatCompilerDiagnosticSummary(diagnostic, { languageMode });
                 const displayMessage = formatCompilerDiagnosticMessage(
                     diagnostic.message,
                     diagnostic.severity,
@@ -358,13 +368,10 @@ export class TcpClient implements IDisposable {
                         severity: diagnostic.severity
                     });
                 } else {
-                    const summary = formatCompilerDiagnosticSummary(diagnostic, { languageMode });
                     this.messageProvider?.addMessage(summary);
                 }
-                this.log(
-                    `编译失败: ${diagnostic.file}:${diagnostic.line}${diagnostic.column ? `:${diagnostic.column}` : ''} ${displayMessage}`,
-                    LogLevel.ERROR
-                );
+                this.ensureRemoteCompileOutputStarted(diagnostic.file);
+                this.appendRemoteCompileDiagnosticOutput(summary, diagnostic.severity);
                 this.showCompileError(
                     diagnostic.file,
                     diagnostic.line,
@@ -386,6 +393,7 @@ export class TcpClient implements IDisposable {
             const compilerDiagnostic = parseCompilerDiagnosticHeader(cleanedMessage);
             if (compilerDiagnostic) {
                 const languageMode = this.getCompilerDiagnosticLanguageMode();
+                const summary = formatCompilerDiagnosticSummary(compilerDiagnostic, { languageMode });
                 const displayMessage = formatCompilerDiagnosticMessage(
                     compilerDiagnostic.message,
                     compilerDiagnostic.severity,
@@ -426,14 +434,10 @@ export class TcpClient implements IDisposable {
                         severity: compilerDiagnostic.severity
                     });
                 } else {
-                    const summary = formatCompilerDiagnosticSummary(compilerDiagnostic, { languageMode });
                     this.messageProvider?.addMessage(summary);
                 }
-                if (compilerDiagnostic.severity === 'warning') {
-                    this.outputChannel.appendLine(`[警告] 编译警告: ${location} ${displayMessage}`);
-                } else {
-                    this.log(`编译失败: ${location} ${displayMessage}`, LogLevel.ERROR);
-                }
+                this.ensureRemoteCompileOutputStarted(compilerDiagnostic.file);
+                this.appendRemoteCompileDiagnosticOutput(summary, compilerDiagnostic.severity);
 
                 this.showCompileError(
                     compilerDiagnostic.file,
@@ -453,6 +457,7 @@ export class TcpClient implements IDisposable {
 
             // 检查编译成功消息
             if (isRemoteCompileSuccessMessage(cleanedMessage)) {
+                this.finishRemoteCompileOutput('成功', '编译成功');
                 this.clearDiagnostics();
                 
                 // 显示成功消息
@@ -618,6 +623,7 @@ export class TcpClient implements IDisposable {
                 break;
             case '015':
                 if (isRemoteCompileSuccessMessage(cleanedContent)) {
+                    this.finishRemoteCompileOutput('成功', '编译成功');
                     this.clearDiagnostics();
                     this.messageProvider?.addMessage('✅ 编译成功');
                     this.log('编译成功', LogLevel.INFO);
@@ -1012,10 +1018,17 @@ export class TcpClient implements IDisposable {
         this.log(`🔄 准备编译文件: ${filePath}`, LogLevel.INFO);
         const nextCompileRootPath = compileRootPath ?? this.currentCompileRootPath;
         this.clearDiagnostics();
+        this.currentCompileMudPath = filePath;
         this.currentCompileRootPath = nextCompileRootPath;
+        this.appendCompileOutputLines(buildCompileOutputStartLines('远程编译', filePath));
 
         try {
             await this.sendCommand(`update ${filePath}`, '编译命令');
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.finishRemoteCompileOutput('失败', `发送编译命令失败: ${errorMessage}`);
+            this.clearDiagnostics();
+            throw error;
         } finally {
             endTimer(); // 🚀 性能监控：结束计时
         }
@@ -1807,6 +1820,33 @@ export class TcpClient implements IDisposable {
         void vscode.commands.executeCommand('workbench.actions.view.problems');
     }
 
+    private appendCompileOutputLines(lines: readonly string[]) {
+        for (const line of lines) {
+            this.compileOutputChannel.appendLine(line);
+        }
+    }
+
+    private ensureRemoteCompileOutputStarted(target: string) {
+        if (this.currentCompileMudPath) {
+            return;
+        }
+        this.currentCompileMudPath = target;
+        this.appendCompileOutputLines(buildCompileOutputStartLines('远程编译', target));
+    }
+
+    private appendRemoteCompileDiagnosticOutput(summary: string, severity: 'error' | 'warning') {
+        this.appendCompileOutputLines([
+            buildCompileOutputProgressDiagnosticLine(severity, summary)
+        ]);
+    }
+
+    private finishRemoteCompileOutput(resultLabel: string, summary: string) {
+        if (!this.currentCompileMudPath) {
+            return;
+        }
+        this.appendCompileOutputLines(buildCompileOutputFinishLines(resultLabel, summary));
+    }
+
     /**
      * 保留原有方法用于全局清理
      */
@@ -1817,6 +1857,7 @@ export class TcpClient implements IDisposable {
         this.firstErrorFile = '';
         this.errorLine = 0;
         this.errorMessage = '';
+        this.currentCompileMudPath = null;
         this.currentCompileRootPath = null;
         this.suppressCompilerContinuation = false;
         this.mudlibCompileFallbackState = createMudlibCompileFallbackState();

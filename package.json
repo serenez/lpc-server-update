@@ -163,6 +163,11 @@
           "description": "本地 LPCC 编译超时时间（毫秒）",
           "minimum": 1000
         },
+        "gameServerCompiler.localCompile.autoCompileOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "保存当前 mudlib 下的 .c/.lpc 文件时自动执行本地 LPCC 编译；仅在 LPCC 和配置文件已明确可用时静默执行"
+        },
         "gameServerCompiler.localCompile.showWarnings": {
           "type": "boolean",
           "default": true,
@@ -269,7 +274,7 @@
       },
       {
         "command": "game-server-compiler.compileCurrentFile",
-        "title": "编译当前文件",
+        "title": "远程Update当前文件",
         "category": "LPC服务器"
       },
       {

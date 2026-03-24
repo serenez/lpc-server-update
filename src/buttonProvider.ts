@@ -24,7 +24,21 @@ interface LocalCompileUiState {
     lpccPathLabel: string;
     configPathLabel: string;
     showWarnings: boolean;
+    autoCompileOnSave: boolean;
     messageLanguageLabel: string;
+}
+
+function createSilentOutputChannel(): vscode.OutputChannel {
+    return {
+        name: 'silent-button-provider',
+        append() {},
+        appendLine() {},
+        clear() {},
+        replace() {},
+        show() {},
+        hide() {},
+        dispose() {}
+    } as vscode.OutputChannel;
 }
 
 export class ButtonProvider implements vscode.WebviewViewProvider {
@@ -41,7 +55,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
     constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
-        this._outputChannel = vscode.window.createOutputChannel('游戏服务器编译器');
+        this._outputChannel = createSilentOutputChannel();
         this._configManager = ConfigManager.getInstance(); // 🚀 获取配置管理器实例
         this.initializeAsync();
     }
@@ -629,6 +643,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         const lpccPath = config.inspect<string>('localCompile.lpccPath')?.workspaceValue;
         const configPath = config.inspect<string>('localCompile.configPath')?.workspaceValue;
         const showWarnings = config.inspect<boolean>('localCompile.showWarnings')?.workspaceValue;
+        const autoCompileOnSave = config.inspect<boolean>('localCompile.autoCompileOnSave')?.workspaceValue;
         const messageLanguage = normalizeCompilerDiagnosticMessageLanguage(
             config.get<string>('diagnostics.messageLanguage', 'dual')
         );
@@ -637,6 +652,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             lpccPathLabel: this.formatLocalCompilePathLabel(typeof lpccPath === 'string' ? lpccPath.trim() : ''),
             configPathLabel: this.formatLocalCompilePathLabel(typeof configPath === 'string' ? configPath.trim() : ''),
             showWarnings: showWarnings ?? true,
+            autoCompileOnSave: autoCompileOnSave ?? false,
             messageLanguageLabel: describeCompilerDiagnosticMessageLanguage(messageLanguage)
         };
     }
@@ -935,14 +951,56 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             }
 
             /* 🚀 配置显示区样式 */
-            .config-display {
+            .config-panel {
                 margin-top: 12px;
+            }
+
+            .config-display-toggle {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
+                color: var(--vscode-foreground);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 8px;
+                padding: 10px 12px;
+                text-align: left;
+            }
+
+            .config-display-toggle:hover {
+                background: color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
+            }
+
+            .config-display-toggle .config-toggle-meta {
+                margin-left: auto;
+                font-size: 11px;
+                color: var(--vscode-descriptionForeground);
+                opacity: 0.8;
+            }
+
+            .config-display-toggle .config-toggle-chevron {
+                transition: transform 0.2s ease;
+                opacity: 0.8;
+            }
+
+            .config-panel.open .config-display-toggle .config-toggle-chevron {
+                transform: rotate(180deg);
+            }
+
+            .config-display {
+                display: none;
+                margin-top: 8px;
                 padding: 12px;
                 background: color-mix(in srgb, var(--vscode-editor-background) 60%, transparent);
                 border: 1px solid var(--vscode-panel-border);
                 border-radius: 8px;
                 font-size: 12px;
                 backdrop-filter: blur(10px);
+            }
+
+            .config-panel.open .config-display {
+                display: block;
             }
 
             .config-item {
@@ -1126,17 +1184,6 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             </head>
             <body>
                 <div class="button-row">
-                    <button id="compile" disabled>
-                        <span class="button-icon">🔨</span>
-                        <span>编译当前文件</span>
-                    </button>
-                    <button id="compileDir" disabled>
-                        <span class="button-icon">📁</span>
-                        <span>编译目录</span>
-                    </button>
-                </div>
-
-                <div class="button-row">
                     <button id="localCompile" disabled>
                         <span class="button-icon">🏠</span>
                         <span>本地LPCC编译</span>
@@ -1147,6 +1194,47 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </button>
                 </div>
                 
+                <div class="button-row">
+                    <button id="generateAutoDeclarations" disabled>
+                        <span class="button-icon">🧩</span>
+                        <span>生成函数声明</span>
+                    </button>
+                    <button id="copyMudPath" disabled>
+                        <span class="button-icon">📋</span>
+                        <span>复制相对路径</span>
+                    </button>
+                </div>
+
+                <div class="dropdown">
+                    <button class="dropdown-button" id="favoriteFilesDropdown">
+                        <span class="button-icon">⭐</span>
+                        <span>常用文件</span>
+                        <span style="margin-left: auto">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="favoriteFilesList">
+                        <div class="dropdown-items-container">
+                            ${favoriteFilesHtml}
+                            <button class="add-button" id="addFavoriteFile">
+                                <span class="button-icon">➕</span>
+                                <span>添加当前文件到常用</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="button-row">
+                    <button id="compile" disabled>
+                        <span class="button-icon">🔨</span>
+                        <span>远程Update当前文件</span>
+                    </button>
+                    <button id="compileDir" disabled>
+                        <span class="button-icon">📁</span>
+                        <span>编译目录</span>
+                    </button>
+                </div>
+
                 <div class="dropdown">
                     <button class="dropdown-button" id="customCommandsDropdown" disabled>
                         <span class="button-icon">⌨️</span>
@@ -1181,34 +1269,6 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </div>
                 </div>
 
-                <div class="dropdown">
-                    <button class="dropdown-button" id="favoriteFilesDropdown">
-                        <span class="button-icon">⭐</span>
-                        <span>常用文件</span>
-                        <span style="margin-left: auto">▼</span>
-                    </button>
-                    <div class="dropdown-content" id="favoriteFilesList">
-                        <div class="dropdown-items-container">
-                            ${favoriteFilesHtml}
-                            <button class="add-button" id="addFavoriteFile">
-                                <span class="button-icon">➕</span>
-                                <span>添加当前文件到常用</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="button-row">
-                    <button id="copyMudPath" disabled>
-                        <span class="button-icon">📋</span>
-                        <span>复制相对路径</span>
-                    </button>
-                    <button id="generateAutoDeclarations" disabled>
-                        <span class="button-icon">🧩</span>
-                        <span>生成函数声明</span>
-                    </button>
-                </div>
-
                 <div class="button-row">
                     <button id="restart" disabled>
                         <span class="button-icon">🔃</span>
@@ -1216,7 +1276,6 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </button>
                 </div>
 
-                <div class="divider"></div>
                 <button id="connect" class="${this._isConnected ? 'connected' : ''}">
                     <span class="button-icon">🔌</span>
                     <span>${this._isConnected ? '断开服务器' : '连接游戏服务器'}</span>
@@ -1235,7 +1294,14 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 </div>
 
                 <!-- 🚀 配置显示区 -->
-                <div class="config-display">
+                <div class="config-panel" id="configPanel">
+                    <button class="config-display-toggle" id="configDisplayToggle" type="button">
+                        <span class="config-icon">🧭</span>
+                        <span>当前配置</span>
+                        <span class="config-toggle-meta" id="configDisplayToggleMeta">点击展开</span>
+                        <span class="config-toggle-chevron">▼</span>
+                    </button>
+                    <div class="config-display">
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">🎯</span>
@@ -1246,7 +1312,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">📁</span>
-                            <span>服务端工作目录</span>
+                            <span>服务端mudlib目录映射路径</span>
                         </div>
                         <div class="config-value" id="config-rootPath">未配置</div>
                     </div>
@@ -1273,6 +1339,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     </div>
                     <div class="config-item">
                         <div class="config-label">
+                            <span class="config-icon">💾</span>
+                            <span>保存自动本地编译</span>
+                        </div>
+                        <div class="config-value" id="config-localAutoCompile">关闭</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">
                             <span class="config-icon">⚠️</span>
                             <span>警告提示</span>
                         </div>
@@ -1285,6 +1358,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         </div>
                         <div class="config-value" id="config-diagnosticLanguage">中英双语</div>
                     </div>
+                </div>
                 </div>
 
                 <script>
@@ -1302,6 +1376,25 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             profiles: ${JSON.stringify(this.getCurrentConfig().profiles || {})},
                             activeProfileId: '${this.getCurrentConfig().activeProfile || 'default'}'
                         };
+
+                        const configPanel = document.getElementById('configPanel');
+                        const configDisplayToggle = document.getElementById('configDisplayToggle');
+                        const configDisplayToggleMeta = document.getElementById('configDisplayToggleMeta');
+
+                        function setConfigPanelExpanded(expanded) {
+                            if (!configPanel) return;
+                            configPanel.classList.toggle('open', expanded);
+                            if (configDisplayToggleMeta) {
+                                configDisplayToggleMeta.textContent = expanded ? '点击收起' : '点击展开';
+                            }
+                        }
+
+                        configDisplayToggle?.addEventListener('click', () => {
+                            const expanded = !configPanel?.classList.contains('open');
+                            setConfigPanelExpanded(expanded);
+                        });
+
+                        setConfigPanelExpanded(false);
 
                         // 命令映射
                         const commands = {
@@ -1576,6 +1669,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             const currentProfileEl = document.getElementById('config-currentProfile');
                             const localLpccEl = document.getElementById('config-localLpcc');
                             const localConfigEl = document.getElementById('config-localConfig');
+                            const localAutoCompileEl = document.getElementById('config-localAutoCompile');
                             const localWarningsEl = document.getElementById('config-localWarnings');
                             const diagnosticLanguageEl = document.getElementById('config-diagnosticLanguage');
 
@@ -1624,6 +1718,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                 const configPathLabel = state.localCompile?.configPathLabel || '自动扫描';
                                 localConfigEl.textContent = configPathLabel;
                                 localConfigEl.classList.toggle('empty', configPathLabel === '自动扫描');
+                            }
+
+                            if (localAutoCompileEl) {
+                                localAutoCompileEl.textContent = state.localCompile?.autoCompileOnSave ? '开启' : '关闭';
+                                localAutoCompileEl.classList.remove('empty');
                             }
 
                             if (localWarningsEl) {

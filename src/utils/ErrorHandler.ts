@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LogManager } from '../log/LogManager';
 
 export class NetworkError extends Error {
     constructor(message: string) {
@@ -52,9 +53,13 @@ export class ErrorHandler {
     private static async handleGenericError(error: Error): Promise<void> {
         const message = `错误: ${error.message}`;
         vscode.window.showErrorMessage(message);
-        
-        // 记录到输出通道
-        const outputChannel = vscode.window.createOutputChannel('LPC服务器错误');
-        outputChannel.appendLine(`[${new Date().toISOString()}] ${error.stack || error.message}`);
+
+        try {
+            LogManager.getInstance()
+                .getOutputChannel()
+                .appendLine(`[${new Date().toISOString()}] ${error.stack || error.message}`);
+        } catch {
+            console.error(error.stack || error.message);
+        }
     }
 }

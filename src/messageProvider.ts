@@ -9,20 +9,6 @@ import {
     normalizeCompilerDiagnosticMessageLanguage
 } from './utils/compilerDiagnosticLocalization';
 
-interface Config {
-    rootPath: string;
-    serverKey: string;
-    encoding: string;
-    compile: {
-        autoCompileOnSave: boolean;
-        defaultDir: string;
-        timeout: number;
-        showDetails: boolean;
-    };
-    loginWithEmail: boolean;
-    loginKey?: string;
-}
-
 interface CompilerDiagnosticPayload {
     displayPath: string;
     localPath: string;
@@ -78,14 +64,11 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     private async handleEncodingChange(currentEncoding: string) {
         try {
-            // 🚀 使用ConfigManager获取和更新配置
             const configManager = ConfigManager.getInstance();
-            const config = configManager.getConfig();
+            await configManager.ensureConfigExists();
 
-            // 直接切换编码
             const newEncoding = currentEncoding === 'UTF8' ? 'GBK' : 'UTF8';
 
-            // 更新配置
             await configManager.updateConfig({ encoding: newEncoding });
 
             // 更新按钮文本
@@ -106,30 +89,19 @@ export class MessageProvider implements vscode.WebviewViewProvider {
 
     private async handleLoginEmailChange(currentLoginWithEmail: boolean) {
         try {
-            // 读取当前配置
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {
-                throw new Error('未找到工作区目录');
-            }
-
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData) as Config;
-            
-            // 切换状态
-            config.loginWithEmail = !currentLoginWithEmail;
-            
-            // 保存配置
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            const configManager = ConfigManager.getInstance();
+            await configManager.ensureConfigExists();
+            const loginWithEmail = !currentLoginWithEmail;
+            await configManager.updateConfig({ loginWithEmail });
             
             // 更新按钮文本
             this._view?.webview.postMessage({ 
                 type: 'updateLoginEmail',
-                loginWithEmail: config.loginWithEmail
+                loginWithEmail
             });
 
             // 显示成功消息
-            this.addMessage(`登录信息已更改为${config.loginWithEmail ? '包含' : '不包含'}邮箱`);
+            this.addMessage(`登录信息已更改为${loginWithEmail ? '包含' : '不包含'}邮箱`);
             
             // 通知需要重新连接
             vscode.window.showInformationMessage('登录设置已更改,需要重新连接服务器以应用更改。');
@@ -145,6 +117,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 throw new Error('未找到工作区目录');
             }
 
+            const configManager = ConfigManager.getInstance();
+            await configManager.ensureConfigExists();
             const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
             if (!fs.existsSync(configPath)) {
                 throw new Error('配置文件不存在');
@@ -193,20 +167,16 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const rawServerData = this.shouldShowRawServerData();
         
         try {
+            const configManager = ConfigManager.getInstance();
+            const config = configManager.getConfig();
+            currentEncoding = config.encoding || 'UTF8';
+            loginWithEmail = config.loginWithEmail || false;
+
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
             if (workspaceRoot) {
                 const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
                 if (fs.existsSync(configPath)) {
-                    const configData = fs.readFileSync(configPath, 'utf8');
-                    const config = JSON.parse(configData) as Config;
-                    currentEncoding = config.encoding || 'UTF8';
-                    loginWithEmail = config.loginWithEmail || false;
                     configLoadStatus = '已加载';
-                    
-                    // 移除重复的配置加载信息
-                    if (configLoadStatus === '文件不存在') {
-                        this.addMessage('配置文件不存在，将使用默认配置');
-                    }
                 } else {
                     configLoadStatus = '文件不存在';
                     this.addMessage('配置文件不存在，将使用默认配置');

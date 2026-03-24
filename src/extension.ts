@@ -18,7 +18,9 @@ import {
 } from './utils/compilerDiagnostics';
 import { shouldRevealProblemsPanel, type ProblemsAutoRevealMode } from './utils/diagnosticUi';
 import {
+    clearMudlibLocalCompileArtifactsCache,
     discoverMudlibLocalCompileArtifacts,
+    discoverMudlibLocalCompileArtifactsCached,
     resolveMudlibLocalCompilePlan,
     type LocalLpccSettings,
     type MudlibLocalCompilePlan
@@ -404,6 +406,7 @@ async function selectLocalCompileAssetForCurrentProject(
 ): Promise<void> {
     const contextInfo = resolveLocalCompileCommandContext();
     const settings = getLocalCompileSettings();
+    clearMudlibLocalCompileArtifactsCache(contextInfo.mudlibRoot);
     const artifacts = discoverMudlibLocalCompileArtifacts(contextInfo.mudlibRoot);
     const descriptor: LocalCompileAssetDescriptor = kind === 'lpcc'
         ? {
@@ -485,6 +488,7 @@ async function selectLocalCompileAssetForCurrentProject(
     }
 
     if (selected.action === 'clear') {
+        clearMudlibLocalCompileArtifactsCache(contextInfo.mudlibRoot);
         await persistLocalCompileSetting(descriptor.settingKey, '');
         const message = `已清空当前项目${descriptor.displayName}`;
         messageProvider?.addMessage(message);
@@ -502,6 +506,7 @@ async function selectLocalCompileAssetForCurrentProject(
         return;
     }
 
+    clearMudlibLocalCompileArtifactsCache(contextInfo.mudlibRoot);
     await persistLocalCompileSetting(
         descriptor.settingKey,
         toWorkspaceStoredPath(contextInfo.workspaceRoot, selectedPath)
@@ -807,7 +812,7 @@ async function resolveLocalCompilePlanForFile(
         throw new Error('无法识别当前文件所属的 mudlib 根目录');
     }
 
-    const artifacts = discoverMudlibLocalCompileArtifacts(mudlibRoot);
+    const artifacts = discoverMudlibLocalCompileArtifactsCached(mudlibRoot);
     const settings = getLocalCompileSettings();
 
     const lpccPath = await ensureLocalCompileAssetPath(

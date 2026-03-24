@@ -5,6 +5,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
     discoverMudlibLocalCompileArtifacts,
+    discoverMudlibLocalCompileArtifactsCached,
+    clearMudlibLocalCompileArtifactsCache,
     resolveMudlibLocalCompilePlan
 } from '../utils/localLpcc';
 
@@ -123,6 +125,7 @@ test('resolveMudlibLocalCompilePlan throws clear error when lpcc or config is mi
 
     fs.mkdirSync(path.join(mudlibRoot, 'bin'), { recursive: true });
     fs.writeFileSync(path.join(mudlibRoot, 'bin', 'lpcc.exe'), '');
+    clearMudlibLocalCompileArtifactsCache();
 
     assert.throws(
         () => resolveMudlibLocalCompilePlan({ workspaceRoot, filePath }),
@@ -157,6 +160,62 @@ test('resolveMudlibLocalCompilePlan rejects manual paths outside current mudlib 
             }
         }),
         /手动配置的 lpcc\.exe 必须位于当前 mudlib 目录内/
+    );
+
+    fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+test('discoverMudlibLocalCompileArtifactsCached reuses recent result for the same mudlib root', () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpc-local-lpcc-cache-'));
+    const workspaceRoot = path.join(baseDir, 'workspace');
+    const mudlibRoot = createMudlibRoot(workspaceRoot, 'duobao');
+    const lpccPath = path.join(mudlibRoot, 'bin', 'lpcc.exe');
+
+    fs.mkdirSync(path.dirname(lpccPath), { recursive: true });
+    fs.writeFileSync(lpccPath, '');
+
+    clearMudlibLocalCompileArtifactsCache();
+    const first = discoverMudlibLocalCompileArtifactsCached(mudlibRoot, 10_000);
+
+    fs.unlinkSync(lpccPath);
+    const second = discoverMudlibLocalCompileArtifactsCached(mudlibRoot, 10_000);
+
+    assert.deepEqual(first, second);
+
+    clearMudlibLocalCompileArtifactsCache();
+    const third = discoverMudlibLocalCompileArtifactsCached(mudlibRoot, 10_000);
+    assert.deepEqual(third.lpccPaths, []);
+
+    fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+test('resolveMudlibLocalCompilePlan reuses cached mudlib discovery during repeated resolution', () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpc-local-lpcc-plan-cache-'));
+    const workspaceRoot = path.join(baseDir, 'workspace');
+    const mudlibRoot = createMudlibRoot(workspaceRoot, 'duobao');
+    const filePath = path.join(mudlibRoot, 'cmds', 'wiz', 'test.c');
+    const lpccPath = path.join(mudlibRoot, 'bin', 'lpcc.exe');
+    const configPath = path.join(mudlibRoot, 'config.ini');
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.mkdirSync(path.dirname(lpccPath), { recursive: true });
+    fs.writeFileSync(filePath, 'void main() {}');
+    fs.writeFileSync(lpccPath, '');
+    fs.writeFileSync(configPath, '');
+
+    clearMudlibLocalCompileArtifactsCache();
+    const first = resolveMudlibLocalCompilePlan({ workspaceRoot, filePath });
+
+    fs.unlinkSync(lpccPath);
+    const second = resolveMudlibLocalCompilePlan({ workspaceRoot, filePath });
+
+    assert.equal(first.executablePath, second.executablePath);
+    assert.equal(first.configPath, second.configPath);
+
+    clearMudlibLocalCompileArtifactsCache();
+    assert.throws(
+        () => resolveMudlibLocalCompilePlan({ workspaceRoot, filePath }),
+        /mudlib 目录下未找到 lpcc\.exe/
     );
 
     fs.rmSync(baseDir, { recursive: true, force: true });

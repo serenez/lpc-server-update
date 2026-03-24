@@ -36,6 +36,10 @@ export interface ConfigV2 {
     version: number;
     activeProfile: string;
     profiles: Record<string, Profile>;
+    customCommands?: unknown[];
+    customEvals?: unknown[];
+    favoriteFiles?: unknown[];
+    [key: string]: unknown;
 }
 
 // 🚀 保持向后兼容 - Config类型等同于Profile
@@ -275,47 +279,19 @@ export class ConfigManager {
                 logger.log('创建.vscode目录', LogLevel.INFO);
             }
 
-            // 创建默认配置文件
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {
-                throw new Error('未找到工作区目录');
-            }
-
-            const defaultConfig = {
-                host: '',
-                port: 0,
-                username: '',
-                password: '',
-                rootPath: workspaceRoot,
-                serverKey: 'buyi-SerenezZmuy',
-                encoding: 'UTF8',
-                loginKey: 'buyi-ZMuy',
-                compile: {
-                    defaultDir: '',
-                    autoCompileOnSave: false,
-                    timeout: 30000,
-                    showDetails: true
-                },
-                connection: {
-                    timeout: 10000,
-                    maxRetries: 3,
-                    retryInterval: 5000,
-                    heartbeatInterval: 30000
-                },
-                loginWithEmail: false
+            const defaultProfile = this.createMinimalConfig() as Profile;
+            const defaultConfig: ConfigV2 = {
+                version: 2,
+                activeProfile: 'default',
+                profiles: {
+                    default: defaultProfile
+                }
             };
 
             fs.writeFileSync(this.configPath, JSON.stringify(defaultConfig, null, 2));
             logger.log('创建默认配置文件', LogLevel.INFO);
 
-            // 🚀 更新内存中的配置（转换为版本2格式）
-            this.config = {
-                version: 2,
-                activeProfile: 'default',
-                profiles: {
-                    default: defaultConfig as Profile
-                }
-            };
+            this.config = defaultConfig;
 
             // 开始监听配置文件变化
             this.watchConfig();
@@ -398,6 +374,7 @@ export class ConfigManager {
 
     private async saveConfig(): Promise<void> {
         try {
+            await fs.promises.mkdir(path.dirname(this.configPath), { recursive: true });
             await fs.promises.writeFile(this.configPath, JSON.stringify(this.config, null, 2));
         } catch (error) {
             const logger = LogManager.getInstance();

@@ -105,6 +105,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         try {
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
             if (!workspaceRoot) {return;}
+            await this._configManager.ensureConfigExists();
 
             const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
             if (fs.existsSync(configPath)) {

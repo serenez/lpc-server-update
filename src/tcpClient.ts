@@ -2,8 +2,6 @@ import * as net from 'net';
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { LogManager, LogLevel } from './log/LogManager';
-import * as path from 'path';
-import * as fs from 'fs';
 import { ButtonProvider } from './buttonProvider';
 import * as iconv from 'iconv-lite';
 import { MessageParser } from './utils/messageParser';
@@ -134,10 +132,14 @@ export class TcpClient implements IDisposable {
         // 🚀 监听配置切换事件
         this.configManager.onProfileChanged((event) => {
             this.log(`配置已切换: ${event.oldProfile} -> ${event.newProfile}`, LogLevel.INFO);
+            this.updateEncoding();
             if (this.isConnected()) {
                 this.log('配置已切换，断开连接', LogLevel.INFO);
                 this.disconnect();
             }
+        });
+        this.configManager.onConfigChanged(() => {
+            this.updateEncoding();
         });
 
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -1322,65 +1324,12 @@ export class TcpClient implements IDisposable {
 
     private updateEncoding() {
         try {
-            const configPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '', '.vscode', 'muy-lpc-update.json');
-            if (fs.existsSync(configPath)) {
-                const configData = fs.readFileSync(configPath, 'utf8');
-                const config = JSON.parse(configData);
-                
-                let needsUpdate = false;
-                
-                if (!config.encoding) {
-                    config.encoding = 'UTF8';
-                    needsUpdate = true;
-                    this.log('未找到编码配置，已设置为默认UTF8编码', LogLevel.INFO);
-                }
-                
-                if (config.loginWithEmail === undefined) {
-                    config.loginWithEmail = false;
-                    needsUpdate = true;
-                    this.log('未找到登录邮箱配置，已设置为默认false', LogLevel.INFO);
-                }
-                
-                if (needsUpdate) {
-                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-                    this.log('配置文件已更新', LogLevel.INFO);
-                }
-                
-                const newEncoding = config.encoding.toUpperCase();
-                if (this.encoding !== newEncoding) {
-                    this.encoding = newEncoding;
-                    this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
-                }
-                
-                fs.watch(configPath, (eventType) => {
-                    if (eventType === 'change') {
-                        // 🚀 防抖延迟，避免文件写入过程中读到空内容
-                        setTimeout(() => {
-                            try {
-                                const configData = fs.readFileSync(configPath, 'utf8');
-                                // 🚀 检查文件内容是否为空或空白
-                                if (!configData || configData.trim() === '') {
-                                    // 文件为空时不输出日志，这是正常的文件保存过程
-                                    return;
-                                }
-                                const newConfig = JSON.parse(configData);
-                                const updatedEncoding = (newConfig.encoding || 'UTF8').toUpperCase();
-                                if (updatedEncoding !== this.encoding) {
-                                    this.encoding = updatedEncoding;
-                                    this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
-                                }
-                            } catch (error) {
-                                // 🚀 只在真正读取失败时输出错误日志
-                                if (!(error instanceof SyntaxError && error.message.includes('JSON'))) {
-                                    this.log(`读取编码配置失败: ${error}`, LogLevel.ERROR);
-                                }
-                            }
-                        }, 100); // 延迟100ms，确保文件写入完成
-                    }
-                });
-            } else {
-                this.log('配置文件不存在，使用默认UTF8编码', LogLevel.INFO);
-                this.encoding = 'UTF8';
+            const config = this.configManager.getConfig();
+            const normalizedEncoding = (config.encoding || 'UTF8').toUpperCase();
+            const nextEncoding = normalizedEncoding === 'GBK' ? 'GBK' : 'UTF8';
+            if (this.encoding !== nextEncoding) {
+                this.encoding = nextEncoding;
+                this.log(`编码设置已更新: ${this.encoding}`, LogLevel.INFO);
             }
         } catch (error) {
             this.log(`读取编码配置失败: ${error}，使用默认UTF8编码`, LogLevel.ERROR);

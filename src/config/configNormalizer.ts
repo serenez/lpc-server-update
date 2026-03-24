@@ -28,6 +28,10 @@ export interface NormalizerConfigV2 {
     version: number;
     activeProfile: string;
     profiles: Record<string, NormalizerProfile>;
+    customCommands?: unknown[];
+    customEvals?: unknown[];
+    favoriteFiles?: unknown[];
+    [key: string]: unknown;
 }
 
 export interface NormalizerResult {
@@ -48,6 +52,37 @@ function ensureProfileName(profile: NormalizerProfile, fallbackName = '默认配
 function getFirstProfileId(profiles: Record<string, NormalizerProfile>): string {
     const ids = Object.keys(profiles);
     return ids.length > 0 ? ids[0] : 'default';
+}
+
+function pickTopLevelCustomData(source: Record<string, unknown> | null | undefined): Partial<NormalizerConfigV2> {
+    if (!source) {
+        return {};
+    }
+
+    const next: Partial<NormalizerConfigV2> = {};
+    if (Array.isArray(source.customCommands)) {
+        next.customCommands = source.customCommands;
+    }
+    if (Array.isArray(source.customEvals)) {
+        next.customEvals = source.customEvals;
+    }
+    if (Array.isArray(source.favoriteFiles)) {
+        next.favoriteFiles = source.favoriteFiles;
+    }
+    return next;
+}
+
+function omitTopLevelCustomData(profile: NormalizerProfile): NormalizerProfile {
+    const {
+        customCommands: _customCommands,
+        customEvals: _customEvals,
+        favoriteFiles: _favoriteFiles,
+        ...rest
+    } = profile;
+    void _customCommands;
+    void _customEvals;
+    void _favoriteFiles;
+    return rest;
 }
 
 export function normalizeConfigToV2(rawConfig: unknown): NormalizerResult {
@@ -78,7 +113,9 @@ export function normalizeConfigToV2(rawConfig: unknown): NormalizerResult {
         const fixed: NormalizerConfigV2 = {
             version: 2,
             activeProfile,
-            profiles: unwrappedProfiles
+            profiles: unwrappedProfiles,
+            ...pickTopLevelCustomData(rawConfig),
+            ...pickTopLevelCustomData(maybeDefault)
         };
         Object.entries(fixed.profiles).forEach(([id, profile]) => ensureProfileName(profile, id));
         return { config: fixed, migrated: true };
@@ -93,20 +130,22 @@ export function normalizeConfigToV2(rawConfig: unknown): NormalizerResult {
         const fixed: NormalizerConfigV2 = {
             version: 2,
             activeProfile,
-            profiles
+            profiles,
+            ...pickTopLevelCustomData(rawConfig)
         };
         Object.entries(fixed.profiles).forEach(([id, profile]) => ensureProfileName(profile, id));
         return { config: fixed, migrated: !hasVersion2 || activeProfileRaw !== activeProfile };
     }
 
     // 旧版单配置
-    const profile: NormalizerProfile = { ...rawConfig };
+    const profile: NormalizerProfile = omitTopLevelCustomData({ ...rawConfig });
     ensureProfileName(profile, '默认配置');
     return {
         config: {
             version: 2,
             activeProfile: 'default',
-            profiles: { default: profile }
+            profiles: { default: profile },
+            ...pickTopLevelCustomData(rawConfig)
         },
         migrated: true
     };

@@ -8,6 +8,28 @@
 
 ---
 
+## [1.4.1] - 2026-03-24
+
+### 🔧 配置一致性修复
+- 修复消息面板里 `编码切换` 与 `登录是否包含邮箱` 仍按旧版扁平配置读写的问题，统一改为读取并更新当前激活的 profile。
+- 修复 `TcpClient` 仍直接监听 `.vscode/muy-lpc-update.json` 顶层 `encoding` 的旧逻辑，改为跟随 `ConfigManager` 配置变化同步编码，避免界面显示和实际连接状态不一致。
+- 修复首次自动创建配置文件时仍写入旧结构的问题，统一创建版本 2 配置格式。
+
+### 🗂️ 自定义数据持久化
+- 修复 `自定义命令`、`自定义Eval`、`常用文件` 在切换 profile、修改编码或其他配置保存后可能被覆盖丢失的问题。
+- 配置归一化与保存现在会保留这些顶层数据，不再被错误塞进 profile 体内或在保存时被覆盖掉。
+
+### ⚡ 本地 LPCC 扫描优化
+- 为 mudlib 内 `lpcc.exe` 和 `config.ini/config.cfg` 的自动发现增加短时缓存，避免每次本地编译、尤其是保存自动本地编译时，都同步递归扫描整棵 mudlib。
+- 手动选择、清空本地 LPCC / config 路径时会主动清理对应 mudlib 的缓存，避免继续使用旧扫描结果。
+
+### ✅ 验证
+- `npm run compile` 通过
+- `npm run lint` 通过
+- `Get-ChildItem dist\\__tests__\\*.js | Sort-Object Name | ForEach-Object { node $_.FullName }` 全量通过
+
+---
+
 ## [1.4.0] - 2026-03-24
 
 ### 🏠 本地 LPCC 编译

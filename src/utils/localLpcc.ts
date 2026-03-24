@@ -31,6 +31,13 @@ export interface ResolveMudlibLocalCompilePlanOptions {
     settings?: LocalLpccSettings;
 }
 
+interface MudlibLocalCompileArtifactsCacheEntry {
+    expiresAt: number;
+    artifacts: MudlibLocalCompileArtifacts;
+}
+
+const mudlibLocalCompileArtifactsCache = new Map<string, MudlibLocalCompileArtifactsCacheEntry>();
+
 export function discoverMudlibLocalCompileArtifacts(mudlibRoot: string): MudlibLocalCompileArtifacts {
     const normalizedRoot = path.resolve(mudlibRoot);
 
@@ -51,6 +58,33 @@ export function discoverMudlibLocalCompileArtifacts(mudlibRoot: string): MudlibL
     };
 }
 
+export function discoverMudlibLocalCompileArtifactsCached(
+    mudlibRoot: string,
+    ttlMs: number = 10_000
+): MudlibLocalCompileArtifacts {
+    const normalizedRoot = path.resolve(mudlibRoot);
+    const now = Date.now();
+    const cached = mudlibLocalCompileArtifactsCache.get(normalizedRoot);
+    if (cached && cached.expiresAt > now) {
+        return cached.artifacts;
+    }
+
+    const artifacts = discoverMudlibLocalCompileArtifacts(normalizedRoot);
+    mudlibLocalCompileArtifactsCache.set(normalizedRoot, {
+        expiresAt: now + ttlMs,
+        artifacts
+    });
+    return artifacts;
+}
+
+export function clearMudlibLocalCompileArtifactsCache(mudlibRoot?: string): void {
+    if (mudlibRoot) {
+        mudlibLocalCompileArtifactsCache.delete(path.resolve(mudlibRoot));
+        return;
+    }
+    mudlibLocalCompileArtifactsCache.clear();
+}
+
 export function resolveMudlibLocalCompilePlan(
     options: ResolveMudlibLocalCompilePlanOptions
 ): MudlibLocalCompilePlan {
@@ -61,7 +95,7 @@ export function resolveMudlibLocalCompilePlan(
 
     const normalizedMudlibRoot = path.resolve(mudlibRoot);
     const mudPath = PathConverter.toMudPath(options.filePath, normalizedMudlibRoot);
-    const artifacts = discoverMudlibLocalCompileArtifacts(normalizedMudlibRoot);
+    const artifacts = discoverMudlibLocalCompileArtifactsCached(normalizedMudlibRoot);
 
     const executablePath = resolveConfiguredOrDetectedPath(
         options.settings?.lpccPath,

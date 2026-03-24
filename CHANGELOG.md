@@ -6,11 +6,16 @@
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] - 2026-03-24
+
 ### 🏠 本地 LPCC 编译
 - 新增 `本地LPCC编译当前文件` 命令与按钮，用于在 VS Code 内直接对当前文件执行离线 LPCC 编译。
 - 本地编译只围绕当前文件所属的 mudlib 根目录工作：自动扫描 `lpcc.exe`、`config.ini`、`config.cfg`，手动选择和保存的路径也限定在当前 mudlib 内，不再去管其他工程目录。
-- 新增 `本地LPCC设置` 入口，把 `LPCC 路径`、`配置文件路径`、`是否提示警告`、`诊断提示语言` 合并到一个按钮里统一管理，并把结果保存到当前项目的 VS Code 工作区设置。
-- 本地 LPCC 输出现在会复用驱动原生诊断格式解析：`/file line N, column M: message` 这类报错会直接进入消息面板与 Problems，并支持跳到准确列号；编译失败摘要会优先显示真正的错误，而不是前面的警告。
+- 新增 `本地LPCC设置` 入口，把 `LPCC 路径`、`配置文件路径`、`保存自动本地编译`、`是否提示警告`、`诊断提示语言` 合并到一个按钮里统一管理，并把结果保存到当前项目的 VS Code 工作区设置。
+- 新增 `gameServerCompiler.localCompile.autoCompileOnSave`，默认关闭；保存 `.c/.lpc` 时会静默执行本地 LPCC 编译，仅在 LPCC 和配置文件已明确可用时触发，缺失、无效或多候选未确认时自动跳过，不会弹窗打断保存。
+- 手动“保存后编译”场景会自动跳过本次保存触发的本地自动编译，避免一次点击造成两次本地编译。
 
 ### 🌏 编译诊断中文化
 - 新增 `gameServerCompiler.diagnostics.messageLanguage` 设置，默认 `dual`，支持切换为 `en` 或 `zh`。
@@ -20,18 +25,19 @@
 ### ✨ 函数声明工作流
 - 新增 `生成当前文件函数声明` 命令，并在控制台把按钮放到 `复制相对路径` 旁边，改为按需手动刷新声明块。
 - `gameServerCompiler.compile.autoDeclareFunctionsOnSave` 继续保留，但默认值改为关闭；需要时可在 VS Code 设置中重新开启保存时自动声明。
-
-### 🧹 自动声明修复
 - 重新生成声明块时，会把文件里与当前函数定义匹配的散落声明一并收拢进 `AUTO DECLARATIONS` 块，避免声明散落在正文各处。
 - 收紧函数头匹配规则，避免把上一行脏文本误吞进声明签名，修复 `aaaavoid int main();` 这类错误声明。
+
+### 🧭 输出、面板与交互
+- 常规输出统一收敛到单一 `LPC-MUD工具` 输出栏，本地与远程编译共用同一输出通道；编译摘要格式统一，非编译操作只输出结果，不再刷标题噪音。
+- 指令控制台按“本地命令 / 远程命令”重排，配置区改为点击展开，并补充显示当前 LPCC、当前 Config、保存自动本地编译、警告提示与诊断语言。
+- `编译当前文件` 命令标题调整为 `远程Update当前文件`，避免与本地 LPCC 编译混淆。
+- 文件相关命令不再严格依赖编辑器焦点：当焦点切到输出栏、Problems 或侧栏时，仍会优先使用当前可见的代码文件执行远程 update、本地编译、复制相对路径和生成函数声明。
 
 ### ✅ 验证
 - `npm run compile` 通过
 - `npm run lint` 通过
-- `node dist/__tests__/AutoDeclaration.test.js` 通过
-- `node dist/__tests__/localCompileDiagnostics.test.js` 通过
-- `node dist/__tests__/localLpcc.test.js` 通过
-- `node dist/__tests__/packageManifest.test.js` 通过
+- `Get-ChildItem dist\__tests__\*.js | Sort-Object Name | ForEach-Object { node $_.FullName }` 全量通过
 
 ---
 

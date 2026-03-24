@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.3.3-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
@@ -10,7 +10,7 @@
 
 ![演示](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZHhrc3pzMzlqbGUyaW44cHNyb3Nra3R5czltMng0dDc2Z25xcm5jcyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/fkWveGpBG8jT6mlvjF/giphy.gif)
 
-[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.3.3 - 统一编译诊断与精准定位**
+[📋 查看版本更新记录](CHANGELOG.md) • 🎮 **最新版本：1.4.0 - 本地 LPCC 工作流与工具面板收敛**
 
 </div>
 
@@ -18,7 +18,9 @@
 
 推荐LPC语法检查，语法高亮，函数提示等功能插件：[LPC language-server](https://marketplace.visualstudio.com/items?itemName=jlchmura.lpc)
 
-此插件配置文件为：'项目根目录/lpc-config.json'(该插件极度依赖配置文件，得以获取更好的体验)
+服务端 Update 配置文件位于：`项目根目录/.vscode/muy-lpc-update.json`
+
+本地 LPCC 的 `lpcc.exe`、`config.ini/config.cfg`、警告提示、保存自动本地编译、诊断语言等项目级设置，保存于当前工作区的 VS Code 设置中（通常是 `.vscode/settings.json`）。
 
 如该插件配置文件不会配置可咨询我。 QQ 279631638
 
@@ -188,16 +190,14 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 2. 点击 "连接游戏服务器"
 3. 开始编码！
 
-### 🔥 最新改进（1.3.3）
+### 🔥 最新改进（1.4.0）
 
-- 🎯 **编译错误只保留一条摘要**：消息面板会把编译错误收敛成一条可点击卡片，避免 `编译位置 / 编译原因 / 源码片段 / 触发链` 把面板刷满
-- 📍 **点击直达文件/行/列**：错误卡片与 Problems 都会使用同一份本地绝对路径，支持直接跳到具体列号
-- ⚠️ **Problems 自动弹出**：新增 `gameServerCompiler.ui.autoRevealProblems` 配置，可控制编译错误或警告出现时是否自动弹出 Problems 面板
-- 🧭 **根目录定位更稳**：兼容自动识别到 `duobao` 这类真实 MUD 根目录，而工作区根目录只是上层目录的场景
-- ✍️ **手动生成函数声明**：在“复制相对路径”旁边新增按钮，随时为当前文件刷新声明块
-- ⚙️ **保存自动声明改为默认关闭**：保留 `compile.autoDeclareFunctionsOnSave` 开关，需要时再开启保存时自动刷新
-- 🏠 **本地 LPCC 编译一期**：新增本地 LPCC 编译命令与按钮，只在当前 mudlib 根目录下扫描 `lpcc.exe`、`config.ini`、`config.cfg`；支持通过“本地LPCC设置”统一选择当前项目的 LPCC、配置文件、警告提示和诊断语言，并把结果保存到当前项目设置
+- 🏠 **本地 LPCC 工作流完善**：新增 `gameServerCompiler.localCompile.autoCompileOnSave`，可在保存 `.c/.lpc` 时自动做本地离线编译；该流程为静默模式，仅在 LPCC 和配置文件已明确可用时才执行，不会在保存时弹窗打断
+- ⚙️ **本地 LPCC 设置收口**：`本地LPCC设置` 统一管理当前项目的 `lpcc.exe`、`config.ini/config.cfg`、保存自动本地编译、警告提示和诊断语言，并在底部“当前配置”里实时显示
 - 🌏 **编译诊断支持中英双语**：新增 `gameServerCompiler.diagnostics.messageLanguage`，默认 `dual`；可切换为仅英文或仅中文，统一作用于本地 LPCC、远程编译消息、Problems 与输出摘要
+- 🎯 **编译错误只保留必要提示**：本地与远程编译输出统一收敛到 `LPC-MUD工具`，编译诊断仍保留精准定位，但移除了多余的过程噪音；复制相对路径、生成函数声明等非编译操作只显示结果
+- 🧭 **当前文件不再依赖焦点**：点击输出栏、Problems 或侧栏后，再执行“远程Update当前文件”“本地LPCC编译”“复制相对路径”“生成函数声明”等命令，会优先使用当前可见的代码文件，而不是因为焦点丢失误判
+- 🧩 **工具面板重排**：本地命令与远程命令分组展示，当前配置区域改为折叠展开，`服务端工作目录` 文案也明确改为 `服务端mudlib目录映射路径`
 
 ---
 
@@ -217,17 +217,19 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 实时状态监控
 
 ### 📝 代码编译
-- 快速编译当前文件
+- 快速远程 Update 当前文件
 - 支持本地 LPCC 编译当前文件
-- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg`、警告提示开关与诊断提示语言
+- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg`、保存自动本地编译、警告提示开关与诊断提示语言
 - 支持整个目录编译
 - 支持一键手动生成当前文件函数声明
 - 可选开启保存时自动生成函数声明（默认关闭）
+- 可选开启保存时自动本地 LPCC 编译（默认关闭，静默执行）
 - 编译错误统一收敛为单条摘要
 - 本地 LPCC 报错会同步进入 Problems，并支持跳转到具体文件/行/列
 - 错误实时提示与 Problems 定位
 - 编译诊断支持英文 / 中文 / 中英双语三种显示模式
 - 点击错误直接跳转到具体文件/行/列
+- 文件相关命令会优先使用当前可见代码文件，不依赖输出栏或侧栏焦点
 
 ### 💻 命令管理
 - 自定义命令快捷执行
@@ -243,6 +245,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 自定义消息样式
 - 原始数据开关（服务器发来什么就显示什么）
 - 编译过程仅保留必要提示与最终诊断，减少噪音卡片
+- 常规输出统一收敛到 `LPC-MUD工具` 输出栏
 
 ### 🧭 编译诊断配置
 

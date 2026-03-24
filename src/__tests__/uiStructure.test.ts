@@ -70,3 +70,21 @@ test('source keeps a single unified output channel for routine use', () => {
     assert.doesNotMatch(extensionSource, /createOutputChannel\('LPC性能监控报告'\)/);
     assert.doesNotMatch(errorHandlerSource, /createOutputChannel\('LPC服务器错误'\)/);
 });
+
+test('source avoids noisy heading logs for copy path and auto declaration commands', () => {
+    const extensionSource = readSource('extension.ts');
+
+    assert.doesNotMatch(extensionSource, /==== 复制当前文件相对路径 ====/);
+    assert.doesNotMatch(extensionSource, /==== 生成当前文件函数声明 ====/);
+    assert.match(extensionSource, /已复制路径:/);
+    assert.match(extensionSource, /函数声明已经是最新的/);
+});
+
+test('source resolves file-targeted commands through preferred visible editor fallback', () => {
+    const extensionSource = readSource('extension.ts');
+
+    assert.match(extensionSource, /function getPreferredFileEditor\(\)/);
+    assert.match(extensionSource, /choosePreferredVisibleEditor/);
+    assert.match(extensionSource, /rememberFileEditor\(vscode\.window\.activeTextEditor\)/);
+    assert.match(extensionSource, /onDidChangeActiveTextEditor\(editor =>/);
+});

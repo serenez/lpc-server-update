@@ -46,6 +46,7 @@ import {
 } from './utils/compileOutput';
 import { normalizeWorkspaceStoredPath } from './utils/localCompilePathStorage';
 import { decideLocalCompileAssetResolution } from './utils/localCompileResolutionPolicy';
+import { choosePreferredVisibleEditor } from './utils/editorSelection';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
@@ -54,6 +55,7 @@ let configManager: ConfigManager;
 let localCompileOutputChannel: vscode.OutputChannel;
 let localCompileDiagnosticCollection: vscode.DiagnosticCollection;
 const skipNextAutoLocalCompileForFile = new Set<string>();
+let lastKnownFileEditorUri: string | undefined;
 
 interface Config {
     host: string;
@@ -160,6 +162,45 @@ async function convertToMudPath(fullPath: string): Promise<string> {
 // 检查文件是否可编译
 function isCompilableFile(filePath: string): boolean {
     return filePath.endsWith('.c') || filePath.endsWith('.lpc');
+}
+
+function isFileEditor(editor: vscode.TextEditor | undefined): editor is vscode.TextEditor {
+    return !!editor && editor.document.uri.scheme === 'file';
+}
+
+function getEditorIdentity(editor: vscode.TextEditor): string {
+    return editor.document.uri.toString();
+}
+
+function rememberFileEditor(editor: vscode.TextEditor | undefined): void {
+    if (isFileEditor(editor)) {
+        lastKnownFileEditorUri = getEditorIdentity(editor);
+    }
+}
+
+function getPreferredFileEditor(): vscode.TextEditor | undefined {
+    const activeEditor = vscode.window.activeTextEditor;
+    const preferredEditor = choosePreferredVisibleEditor(
+        isFileEditor(activeEditor)
+            ? {
+                editor: activeEditor,
+                id: getEditorIdentity(activeEditor),
+                isFile: true
+            }
+            : undefined,
+        vscode.window.visibleTextEditors.map(editor => ({
+            editor,
+            id: getEditorIdentity(editor),
+            isFile: isFileEditor(editor)
+        })),
+        lastKnownFileEditorUri
+    );
+
+    const resolvedEditor = preferredEditor?.editor;
+    if (resolvedEditor) {
+        rememberFileEditor(resolvedEditor);
+    }
+    return resolvedEditor;
 }
 
 function getWorkspaceRoot(): string {
@@ -324,7 +365,7 @@ function describeInvalidLocalCompileAssetPath(
 
 function resolveLocalCompileCommandContext(explicitFilePath?: string): LocalCompileCommandContext {
     const workspaceRoot = getWorkspaceRoot();
-    const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const activeFilePath = getPreferredFileEditor()?.document.uri.fsPath;
     const filePath = explicitFilePath ?? activeFilePath;
     const probePaths = [
         filePath,
@@ -1204,7 +1245,7 @@ function buildAutoDeclarationEdits(
 }
 
 async function generateAutoDeclarationsForActiveEditor(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredFileEditor();
     if (!editor) {
         vscode.window.showErrorMessage('请先打开一个文件');
         return;
@@ -1217,6 +1258,7 @@ async function generateAutoDeclarationsForActiveEditor(): Promise<void> {
 
     const edits = buildAutoDeclarationEdits(editor.document, { ignoreSetting: true });
     if (edits.length === 0) {
+        localCompileOutputChannel.appendLine('函数声明已经是最新的');
         messageProvider?.addMessage('函数声明已经是最新的');
         vscode.window.showInformationMessage('函数声明已经是最新的');
         return;
@@ -1232,6 +1274,7 @@ async function generateAutoDeclarationsForActiveEditor(): Promise<void> {
         throw new Error('函数声明写入失败');
     }
 
+    localCompileOutputChannel.appendLine('函数声明已更新，等待保存');
     messageProvider?.addMessage('函数声明已更新，等待保存');
     vscode.window.showInformationMessage('函数声明已更新，等待保存');
 }
@@ -1433,6 +1476,7 @@ async function checkAndUpdateConfig(): Promise<boolean> {
 
 export async function activate(context: vscode.ExtensionContext) {
     console.log('插件初始化...');
+    rememberFileEditor(vscode.window.activeTextEditor);
     
     // 创建输出通道
     const outputChannel = vscode.window.createOutputChannel('LPC-MUD工具');
@@ -1461,6 +1505,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
         vscode.window.registerWebviewViewProvider('game-server-buttons', buttonProvider, {
             webviewOptions: { retainContextWhenHidden: true }
+        }),
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            rememberFileEditor(editor);
         }),
         vscode.workspace.onDidChangeConfiguration(event => {
             if (
@@ -1553,7 +1600,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.compileCurrentFile': async () => {
-            const editor = vscode.window.activeTextEditor;
+            const editor = getPreferredFileEditor();
             const filePath = editor?.document.uri.fsPath;
             const compileCheck = checkCompilePreconditions(
                 { connected: tcpClient.isConnected(), loggedIn: tcpClient.isLoggedIn() },
@@ -1606,7 +1653,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.localCompileCurrentFile': async () => {
-            const editor = vscode.window.activeTextEditor;
+            const editor = getPreferredFileEditor();
             const filePath = editor?.document.uri.fsPath;
             if (!filePath) {
                 vscode.window.showErrorMessage('请先打开一个文件');
@@ -1644,8 +1691,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
         },
         'game-server-compiler.copyMudPath': async () => {
-            outputChannel.appendLine('==== 复制当前文件相对路径 ====');
-            const editor = vscode.window.activeTextEditor;
+            const editor = getPreferredFileEditor();
             const filePath = editor?.document.uri.fsPath;
 
             if (!filePath) {
@@ -1666,8 +1712,6 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.generateAutoDeclarations': async () => {
-            outputChannel.appendLine('==== 生成当前文件函数声明 ====');
-
             try {
                 await generateAutoDeclarationsForActiveEditor();
             } catch (error) {

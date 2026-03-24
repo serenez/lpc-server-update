@@ -88,3 +88,23 @@ test('source resolves file-targeted commands through preferred visible editor fa
     assert.match(extensionSource, /rememberFileEditor\(vscode\.window\.activeTextEditor\)/);
     assert.match(extensionSource, /onDidChangeActiveTextEditor\(editor =>/);
 });
+
+test('button panel source routes custom data persistence through ConfigManager', () => {
+    const source = readSource('buttonProvider.ts');
+
+    assert.match(source, /this\._configManager\.getAuxiliaryData\(\)/);
+    assert.match(source, /await this\._configManager\.updateAuxiliaryData\(/);
+    assert.doesNotMatch(source, /readFileSync\(configPath/);
+    assert.doesNotMatch(source, /writeFileSync\(configPath/);
+    assert.doesNotMatch(source, /fs\.watch\(configPath/);
+});
+
+test('config manager source serializes saves and awaits vscode config sync writes', () => {
+    const source = readSource('config/ConfigManager.ts');
+
+    assert.match(source, /private saveQueue: Promise<void> = Promise\.resolve\(\)/);
+    assert.match(source, /const writeTask = this\.saveQueue\.then/);
+    assert.match(source, /async updateAuxiliaryData\(newData: ConfigAuxiliaryData\): Promise<void>/);
+    assert.match(source, /private async syncVSCodeConfig\(\): Promise<void>/);
+    assert.match(source, /await this\.updateConfig\(/);
+});

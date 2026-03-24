@@ -42,6 +42,12 @@ export interface ConfigV2 {
     [key: string]: unknown;
 }
 
+export interface ConfigAuxiliaryData {
+    customCommands?: unknown[];
+    customEvals?: unknown[];
+    favoriteFiles?: unknown[];
+}
+
 // 🚀 保持向后兼容 - Config类型等同于Profile
 export type Config = Profile;
 
@@ -56,6 +62,7 @@ export class ConfigManager {
     private isWatchingConfig: boolean = false; // 🚀 跟踪是否已在监听配置文件
     private lastConfigMtime: number = 0; // 🚀 记录最后修改时间
     private configReloadTimer: NodeJS.Timeout | null = null; // 防抖定时器
+    private saveQueue: Promise<void> = Promise.resolve();
 
     private constructor() {
         this.eventEmitter = new EventEmitter();
@@ -86,13 +93,13 @@ export class ConfigManager {
             this.disposables.push(
                 vscode.workspace.onDidChangeConfiguration(e => {
                     if (e.affectsConfiguration('gameServerCompiler')) {
-                        this.syncVSCodeConfig();
+                        void this.syncVSCodeConfig();
                     }
                 })
             );
 
             // 初始同步VS Code配置
-            this.syncVSCodeConfig();
+            void this.syncVSCodeConfig();
         } catch (error) {
             const logger = LogManager.getInstance();
             logger.log(`配置初始化失败: ${error}`, LogLevel.ERROR);
@@ -111,20 +118,48 @@ export class ConfigManager {
     getConfig(): Config {
         const configV2 = this.config as ConfigV2;
         const activeProfile = configV2.profiles[configV2.activeProfile];
-        return { ...activeProfile };
+        return this.cloneValue(activeProfile);
+    }
+
+    getConfigSnapshot(): ConfigV2 {
+        return this.cloneValue(this.config);
+    }
+
+    getAuxiliaryData(): ConfigAuxiliaryData {
+        return {
+            customCommands: this.cloneValue(this.config.customCommands ?? []),
+            customEvals: this.cloneValue(this.config.customEvals ?? []),
+            favoriteFiles: this.cloneValue(this.config.favoriteFiles ?? [])
+        };
     }
 
     // 🚀 更新配置 - 更新当前激活的配置
     async updateConfig(newConfig: Partial<Config>): Promise<void> {
         const configV2 = this.config as ConfigV2;
         const activeProfileId = configV2.activeProfile;
-        const currentProfile = { ...configV2.profiles[activeProfileId] };
+        const currentProfile = this.cloneValue(configV2.profiles[activeProfileId]);
         const updatedProfile = { ...currentProfile, ...newConfig };
 
-        const oldConfig = { ...currentProfile };
+        const oldConfig = this.cloneValue(currentProfile);
         configV2.profiles[activeProfileId] = updatedProfile;
         await this.saveConfig();
-        this.eventEmitter.emit('configChanged', { oldConfig, newConfig: updatedProfile });
+        this.emitConfigChanged(oldConfig);
+    }
+
+    async updateAuxiliaryData(newData: ConfigAuxiliaryData): Promise<void> {
+        const oldConfig = this.getConfig();
+        if (newData.customCommands !== undefined) {
+            this.config.customCommands = this.cloneValue(newData.customCommands);
+        }
+        if (newData.customEvals !== undefined) {
+            this.config.customEvals = this.cloneValue(newData.customEvals);
+        }
+        if (newData.favoriteFiles !== undefined) {
+            this.config.favoriteFiles = this.cloneValue(newData.favoriteFiles);
+        }
+
+        await this.saveConfig();
+        this.emitConfigChanged(oldConfig);
     }
 
     // 🚀 ========== 新增：多配置支持方法 ==========
@@ -133,14 +168,15 @@ export class ConfigManager {
      * 🚀 获取所有配置
      */
     getAllProfiles(): Record<string, Profile> {
-        return { ...this.config.profiles };
+        return this.cloneValue(this.config.profiles);
     }
 
     /**
      * 🚀 获取指定配置
      */
     getProfile(profileId: string): Profile | null {
-        return this.config.profiles[profileId] || null;
+        const profile = this.config.profiles[profileId];
+        return profile ? this.cloneValue(profile) : null;
     }
 
     /**
@@ -159,8 +195,10 @@ export class ConfigManager {
         }
 
         const oldProfile = this.config.activeProfile;
+        const oldConfig = this.getConfig();
         this.config.activeProfile = profileId;
         await this.saveConfig();
+        this.emitConfigChanged(oldConfig);
 
         // 🚀 触发配置切换事件
         this.profileEventEmitter.emit('profileChanged', {
@@ -177,8 +215,10 @@ export class ConfigManager {
             throw new Error(`配置ID已存在: ${profileId}`);
         }
 
+        const oldConfig = this.getConfig();
         this.config.profiles[profileId] = profile;
         await this.saveConfig();
+        this.emitConfigChanged(oldConfig);
     }
 
     /**
@@ -189,9 +229,11 @@ export class ConfigManager {
             throw new Error(`配置不存在: ${profileId}`);
         }
 
-        const currentProfile = { ...this.config.profiles[profileId] };
+        const oldConfig = this.getConfig();
+        const currentProfile = this.cloneValue(this.config.profiles[profileId]);
         this.config.profiles[profileId] = { ...currentProfile, ...profile };
         await this.saveConfig();
+        this.emitConfigChanged(oldConfig);
     }
 
     /**
@@ -206,6 +248,7 @@ export class ConfigManager {
             throw new Error(`配置不存在: ${profileId}`);
         }
 
+        const oldConfig = this.getConfig();
         delete this.config.profiles[profileId];
 
         // 如果删除的是当前激活的配置，切换到第一个可用配置
@@ -215,6 +258,7 @@ export class ConfigManager {
         }
 
         await this.saveConfig();
+        this.emitConfigChanged(oldConfig);
     }
 
     /**
@@ -248,6 +292,20 @@ export class ConfigManager {
     // 监听配置变化
     onConfigChanged(listener: (event: {oldConfig: Config, newConfig: Config}) => void): void {
         this.eventEmitter.on('configChanged', listener);
+    }
+
+    private cloneValue<T>(value: T): T {
+        if (value === undefined || value === null) {
+            return value;
+        }
+        return JSON.parse(JSON.stringify(value)) as T;
+    }
+
+    private emitConfigChanged(oldConfig: Config): void {
+        this.eventEmitter.emit('configChanged', {
+            oldConfig: this.cloneValue(oldConfig),
+            newConfig: this.getConfig()
+        });
     }
 
     private getConfigPath(): string {
@@ -373,14 +431,20 @@ export class ConfigManager {
     }
 
     private async saveConfig(): Promise<void> {
-        try {
-            await fs.promises.mkdir(path.dirname(this.configPath), { recursive: true });
-            await fs.promises.writeFile(this.configPath, JSON.stringify(this.config, null, 2));
-        } catch (error) {
-            const logger = LogManager.getInstance();
-            logger.log(`保存配置失败: ${error}`, LogLevel.ERROR);
-            throw error;
-        }
+        const serializedConfig = JSON.stringify(this.config, null, 2);
+        const writeTask = this.saveQueue.then(async () => {
+            try {
+                await fs.promises.mkdir(path.dirname(this.configPath), { recursive: true });
+                await fs.promises.writeFile(this.configPath, serializedConfig);
+            } catch (error) {
+                const logger = LogManager.getInstance();
+                logger.log(`保存配置失败: ${error}`, LogLevel.ERROR);
+                throw error;
+            }
+        });
+
+        this.saveQueue = writeTask.catch(() => {});
+        await writeTask;
     }
 
     private watchConfig(): void {
@@ -495,7 +559,8 @@ export class ConfigManager {
             }
 
             // 更新配置
-            const oldConfig = { ...this.config };
+            const oldProfileId = this.config.activeProfile;
+            const oldConfig = this.getConfig();
             this.config = migratedConfig;
 
             // 记录变化的配置项
@@ -505,18 +570,14 @@ export class ConfigManager {
                 });
 
                 // 如果activeProfile变化了，触发profileChanged事件
-                if (oldConfig.activeProfile !== this.config.activeProfile) {
+                if (oldProfileId !== this.config.activeProfile) {
                     this.profileEventEmitter.emit('profileChanged', {
-                        oldProfile: oldConfig.activeProfile,
+                        oldProfile: oldProfileId,
                         newProfile: this.config.activeProfile
                     });
                 }
 
-                this.eventEmitter.emit('configChanged', {
-                    oldConfig,
-                    newConfig: this.config,
-                    changes
-                });
+                this.emitConfigChanged(oldConfig);
 
                 logger.log('配置文件已重新加载并更新', LogLevel.INFO);
             } else {
@@ -557,21 +618,25 @@ export class ConfigManager {
     }
 
     // 同步VS Code配置
-    private syncVSCodeConfig(): void {
-        const vsCodeConfig = vscode.workspace.getConfiguration('gameServerCompiler');
-        const autoCompileOnSave = vsCodeConfig.get<boolean>('compile.autoCompileOnSave');
+    private async syncVSCodeConfig(): Promise<void> {
+        try {
+            const vsCodeConfig = vscode.workspace.getConfiguration('gameServerCompiler');
+            const autoCompileOnSave = vsCodeConfig.get<boolean>('compile.autoCompileOnSave');
 
-        // 🚀 从当前激活的配置中获取
-        const activeProfileId = this.config.activeProfile;
-        const currentAutoCompile = this.config.profiles[activeProfileId].compile.autoCompileOnSave;
+            // 🚀 从当前激活的配置中获取
+            const activeProfileId = this.config.activeProfile;
+            const currentAutoCompile = this.config.profiles[activeProfileId].compile.autoCompileOnSave;
 
-        if (autoCompileOnSave !== undefined && autoCompileOnSave !== currentAutoCompile) {
-            this.updateConfig({
-                compile: {
-                    ...this.config.profiles[activeProfileId].compile,
-                    autoCompileOnSave
-                }
-            });
+            if (autoCompileOnSave !== undefined && autoCompileOnSave !== currentAutoCompile) {
+                await this.updateConfig({
+                    compile: {
+                        ...this.config.profiles[activeProfileId].compile,
+                        autoCompileOnSave
+                    }
+                });
+            }
+        } catch (error) {
+            LogManager.getInstance().log(`同步 VS Code 配置失败: ${error}`, LogLevel.ERROR);
         }
     }
 

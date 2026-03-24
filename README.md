@@ -61,7 +61,7 @@
 - [优化版 Windows FluffOS 驱动](http://qn.aimud.cn/driver.exe)
 - [优化版 Windows LPCC](http://qn.aimud.cn/lpcc.exe)
 - Linux 版本不提供现成二进制，请自行从下方 FluffOS 项目源码编译
-- [FluffOS 项目地址（待补充）](https://github.com/serenez/fluffos_Z)
+- [FluffOS 项目地址](https://github.com/serenez/fluffos_Z)
 
 ---
 

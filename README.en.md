@@ -63,7 +63,7 @@ If you want to use this extension as your daily LPC compile error tool, you shou
 - [Optimized Windows FluffOS driver](http://qn.aimud.cn/driver.exe)
 - [Optimized Windows LPCC](http://qn.aimud.cn/lpcc.exe)
 - Prebuilt Linux binaries are not provided here. Please build the Linux version from the FluffOS source project below.
-- [FluffOS project repository (to be filled in)](https://github.com/serenez/fluffos_Z)
+- [FluffOS project repository](https://github.com/serenez/fluffos_Z)
 
 ---
 

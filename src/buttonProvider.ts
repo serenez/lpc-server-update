@@ -57,12 +57,19 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         console.log('ButtonProvider constructor called');
         this._outputChannel = createSilentOutputChannel();
         this._configManager = ConfigManager.getInstance(); // 🚀 获取配置管理器实例
+        this._configManager.onConfigChanged(() => {
+            this.loadCustomCommands();
+            this.updateView();
+        });
+        this._configManager.onProfileChanged(() => {
+            this.updateView();
+        });
         this.initializeAsync();
     }
 
     private async initializeAsync() {
         try {
-            await this.loadCustomCommands();
+            this.loadCustomCommands();
             this._isInitialized = true;
             this.updateView();
             console.log('ButtonProvider initialization completed');
@@ -74,28 +81,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
     private loadCustomCommands() {
         try {
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {return;}
-
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            if (fs.existsSync(configPath)) {
-                const configData = fs.readFileSync(configPath, 'utf8');
-                const config = JSON.parse(configData);
-                this._customCommands = config.customCommands || [];
-                this._customEvals = config.customEvals || [];
-                this._favoriteFiles = (config.favoriteFiles || []).map((item: any) => {
-                    if (typeof item === 'string') {
-                        return { name: path.basename(item), path: item };
-                    }
-                    return {
-                        name: item?.name || path.basename(item?.path || ''),
-                        path: item?.path || ''
-                    };
-                }).filter((item: FavoriteFile) => !!item.path);
-                console.log('Loaded custom commands:', this._customCommands);
-                console.log('Loaded custom evals:', this._customEvals);
-                console.log('Loaded favorite files:', this._favoriteFiles);
-            }
+            const auxiliaryData = this._configManager.getAuxiliaryData();
+            this._customCommands = this.normalizeCustomCommandList(auxiliaryData.customCommands);
+            this._customEvals = this.normalizeCustomCommandList(auxiliaryData.customEvals);
+            this._favoriteFiles = this.normalizeFavoriteFileList(auxiliaryData.favoriteFiles);
+            console.log('Loaded custom commands:', this._customCommands);
+            console.log('Loaded custom evals:', this._customEvals);
+            console.log('Loaded favorite files:', this._favoriteFiles);
         } catch (error) {
             console.error('Failed to load custom commands:', error);
         }
@@ -103,38 +95,86 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
     private async saveCustomCommands() {
         try {
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            if (!workspaceRoot) {return;}
             await this._configManager.ensureConfigExists();
+            this._outputChannel.appendLine('==== 保存自定义命令 ====');
+            this._outputChannel.appendLine('自定义命令列表:');
+            this._customCommands.forEach(cmd => {
+                this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+            });
+            this._outputChannel.appendLine('Eval命令列表:');
+            this._customEvals.forEach(cmd => {
+                this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
+            });
+            this._outputChannel.appendLine('常用文件列表:');
+            this._favoriteFiles.forEach(file => {
+                this._outputChannel.appendLine(`- ${file.name}: ${file.path}`);
+            });
 
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            if (fs.existsSync(configPath)) {
-                const configData = fs.readFileSync(configPath, 'utf8');
-                const config = JSON.parse(configData);
-                
-                this._outputChannel.appendLine('==== 保存自定义命令 ====');
-                this._outputChannel.appendLine('自定义命令列表:');
-                this._customCommands.forEach(cmd => {
-                    this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
-                });
-                this._outputChannel.appendLine('Eval命令列表:');
-                this._customEvals.forEach(cmd => {
-                    this._outputChannel.appendLine(`- ${cmd.name}: ${cmd.command}`);
-                });
-                this._outputChannel.appendLine('常用文件列表:');
-                this._favoriteFiles.forEach(file => {
-                    this._outputChannel.appendLine(`- ${file.name}: ${file.path}`);
-                });
-                
-                config.customCommands = this._customCommands;
-                config.customEvals = this._customEvals;
-                config.favoriteFiles = this._favoriteFiles;
-                fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-            }
+            await this._configManager.updateAuxiliaryData({
+                customCommands: this._customCommands,
+                customEvals: this._customEvals,
+                favoriteFiles: this._favoriteFiles
+            });
         } catch (error) {
             this._outputChannel.appendLine(`保存自定义命令失败: ${error}`);
             console.error('Failed to save custom commands:', error);
         }
+    }
+
+    private normalizeCustomCommandList(rawList: unknown): CustomCommand[] {
+        if (!Array.isArray(rawList)) {
+            return [];
+        }
+
+        return rawList
+            .map((item): CustomCommand | undefined => {
+                if (!item || typeof item !== 'object') {
+                    return undefined;
+                }
+                const { name, command } = item as Partial<CustomCommand>;
+                if (typeof name !== 'string' || typeof command !== 'string') {
+                    return undefined;
+                }
+                return {
+                    name: name.trim(),
+                    command: command.trim()
+                };
+            })
+            .filter((item): item is CustomCommand => !!item && !!item.name && !!item.command);
+    }
+
+    private normalizeFavoriteFileList(rawList: unknown): FavoriteFile[] {
+        if (!Array.isArray(rawList)) {
+            return [];
+        }
+
+        return rawList
+            .map((item): FavoriteFile | undefined => {
+                if (typeof item === 'string') {
+                    const normalizedPath = item.trim();
+                    if (!normalizedPath) {
+                        return undefined;
+                    }
+                    return { name: path.basename(normalizedPath), path: normalizedPath };
+                }
+
+                if (!item || typeof item !== 'object') {
+                    return undefined;
+                }
+
+                const favorite = item as Partial<FavoriteFile>;
+                if (typeof favorite.path !== 'string' || !favorite.path.trim()) {
+                    return undefined;
+                }
+
+                return {
+                    name: typeof favorite.name === 'string' && favorite.name.trim()
+                        ? favorite.name.trim()
+                        : path.basename(favorite.path),
+                    path: favorite.path.trim()
+                };
+            })
+            .filter((item): item is FavoriteFile => !!item && !!item.path);
     }
 
     private async addCustomCommand(isEval: boolean = false) {
@@ -457,45 +497,6 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         // 设置初始HTML
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // 🚀 监听配置文件变化，实时更新配置显示
-        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-        if (workspaceRoot) {
-            const configPath = path.join(workspaceRoot, '.vscode', 'muy-lpc-update.json');
-            if (fs.existsSync(configPath)) {
-                let configUpdateTimer: NodeJS.Timeout | null = null;
-                const configWatcher = fs.watch(configPath, (eventType) => {
-                    if (eventType === 'change') {
-                        // 🚀 防抖：清除之前的定时器，重新计时
-                        if (configUpdateTimer) {
-                            clearTimeout(configUpdateTimer);
-                        }
-                        // 延迟200ms，确保文件写入完成
-                        configUpdateTimer = setTimeout(() => {
-                            try {
-                                // 检查文件内容是否为空
-                                const configData = fs.readFileSync(configPath, 'utf8');
-                                if (configData && configData.trim() !== '') {
-                                    this._outputChannel.appendLine('==== 配置文件已修改 ====');
-                                    this.updateView();
-                                }
-                                // 文件为空时不输出日志，这是正常的文件保存过程
-                            } catch (error) {
-                                // 只在真正读取失败时输出错误
-                                this._outputChannel.appendLine(`读取配置文件失败: ${error}`);
-                            }
-                            configUpdateTimer = null;
-                        }, 200);
-                    }
-                });
-                this._disposables.push(new vscode.Disposable(() => {
-                    if (configUpdateTimer) {
-                        clearTimeout(configUpdateTimer);
-                    }
-                    configWatcher.close();
-                }));
-            }
-        }
-
         // 处理消息
         this._disposables.push(
             webviewView.webview.onDidReceiveMessage(async message => {
@@ -582,24 +583,14 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
      */
     private getCurrentConfig() {
         try {
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-            const configPath = path.join(workspaceRoot || '', '.vscode', 'muy-lpc-update.json');
-
-            if (fs.existsSync(configPath)) {
-                const configData = fs.readFileSync(configPath, 'utf8');
-                const config = JSON.parse(configData);
-
-                // 🚀 如果是版本2格式，返回当前激活的配置
-                if (config.version >= 2 && config.profiles) {
-                    const activeProfile = config.profiles[config.activeProfile];
-                    return {
-                        ...activeProfile,
-                        activeProfile: config.activeProfile,
-                        profiles: config.profiles
-                    };
-                }
-
-                return config;
+            const config = this._configManager.getConfigSnapshot();
+            const activeProfile = config.profiles[config.activeProfile];
+            if (activeProfile) {
+                return {
+                    ...activeProfile,
+                    activeProfile: config.activeProfile,
+                    profiles: config.profiles
+                };
             }
         } catch (error) {
             console.error('Failed to get current config:', error);

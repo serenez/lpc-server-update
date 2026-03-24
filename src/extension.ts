@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as nodePath from 'path';
+import { execFile, type ExecFileException } from 'child_process';
 import { TcpClient } from './tcpClient';
 import { MessageProvider } from './messageProvider';
 import { ButtonProvider } from './buttonProvider';
@@ -7,11 +10,32 @@ import { ConfigManager } from './config/ConfigManager';
 import { PathConverter } from './utils/PathConverter';
 import { checkCompilePreconditions } from './utils/CompilePreconditions';
 import { shouldAutoDeclareForFile, updateAutoDeclarations } from './utils/AutoDeclaration';
+import {
+    formatCompilerDiagnosticSummary,
+    type CompilerDiagnostic,
+    type CompilerDiagnosticSeverity
+} from './utils/compilerDiagnostics';
+import { shouldRevealProblemsPanel, type ProblemsAutoRevealMode } from './utils/diagnosticUi';
+import {
+    discoverMudlibLocalCompileArtifacts,
+    resolveMudlibLocalCompilePlan,
+    type LocalLpccSettings,
+    type MudlibLocalCompilePlan
+} from './utils/localLpcc';
+import {
+    filterLocalCompileDiagnostics,
+    orderLocalCompileDiagnosticsForTimeline,
+    parseLocalCompileDiagnostics,
+    partitionLocalCompileDiagnostics,
+    pickPrimaryLocalCompileDiagnostic
+} from './utils/localCompileDiagnostics';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
 let buttonProvider: ButtonProvider;
 let configManager: ConfigManager;
+let localCompileOutputChannel: vscode.OutputChannel;
+let localCompileDiagnosticCollection: vscode.DiagnosticCollection;
 
 interface Config {
     host: string;
@@ -34,6 +58,50 @@ interface Config {
 interface MudPathResolution {
     mudPath: string;
     usedRootPath: string;
+}
+
+interface LocalCompileSettings extends LocalLpccSettings {
+    timeout: number;
+    showWarnings: boolean;
+}
+
+interface LocalCompileProcessResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
+
+interface LocalCompileCommandContext {
+    workspaceRoot: string;
+    mudlibRoot: string;
+    filePath?: string;
+}
+
+interface LocalCompileAssetDescriptor {
+    kind: 'lpcc' | 'config';
+    displayName: string;
+    settingKey: 'gameServerCompiler.localCompile.lpccPath' | 'gameServerCompiler.localCompile.configPath';
+    detectedPaths: string[];
+    configuredPath?: string;
+}
+
+interface LocalCompileDisplayState {
+    lpccPathLabel: string;
+    configPathLabel: string;
+    showWarnings: boolean;
+}
+
+class LocalCompileProcessError extends Error {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+
+    constructor(message: string, stdout: string, stderr: string, exitCode: number | null) {
+        super(message);
+        this.stdout = stdout;
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+    }
 }
 
 // 修改路径转换方法
@@ -70,14 +138,715 @@ function isCompilableFile(filePath: string): boolean {
     return filePath.endsWith('.c') || filePath.endsWith('.lpc');
 }
 
+function getWorkspaceRoot(): string {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+    if (!workspaceRoot) {
+        throw new Error('未找到工作区目录');
+    }
+    return workspaceRoot;
+}
+
+function getLocalCompileSettings(): LocalCompileSettings {
+    const config = vscode.workspace.getConfiguration('gameServerCompiler');
+    const lpccPath = config.inspect<string>('localCompile.lpccPath')?.workspaceValue;
+    const configPath = config.inspect<string>('localCompile.configPath')?.workspaceValue;
+    const showWarnings = config.inspect<boolean>('localCompile.showWarnings')?.workspaceValue;
+
+    return {
+        lpccPath: typeof lpccPath === 'string' ? lpccPath.trim() : '',
+        configPath: typeof configPath === 'string' ? configPath.trim() : '',
+        timeout: config.get<number>('localCompile.timeout', 30000),
+        showWarnings: showWarnings ?? true
+    };
+}
+
+function resolveConfiguredSettingPath(workspaceRoot: string, rawPath: string): string {
+    return nodePath.resolve(nodePath.isAbsolute(rawPath) ? rawPath : nodePath.join(workspaceRoot, rawPath));
+}
+
+function isPathInsideMudlibRoot(mudlibRoot: string, targetPath: string): boolean {
+    const relativePath = nodePath.relative(mudlibRoot, targetPath);
+    return !relativePath.startsWith('..') && !nodePath.isAbsolute(relativePath);
+}
+
+function summarizeLocalCompileError(stderr: string, stdout: string): string {
+    const candidate = [stderr, stdout]
+        .flatMap(section => section.split(/\r?\n/))
+        .map(line => line.trim())
+        .find(line => line.length > 0);
+    return candidate ?? '未返回错误详情';
+}
+
+function toWorkspaceStoredPath(workspaceRoot: string, selectedPath: string): string {
+    const relativePath = nodePath.relative(workspaceRoot, selectedPath);
+    if (!relativePath.startsWith('..') && !nodePath.isAbsolute(relativePath)) {
+        return relativePath.replace(/\\/g, '/');
+    }
+    return selectedPath;
+}
+
+async function persistLocalCompileSetting(fullKey: string, value: unknown): Promise<void> {
+    await vscode.workspace.getConfiguration().update(fullKey, value, vscode.ConfigurationTarget.Workspace);
+    buttonProvider?.refreshViewState();
+}
+
+function getLocalCompileAssetRelativePath(mudlibRoot: string, filePath: string): string {
+    return nodePath.relative(mudlibRoot, filePath).replace(/\\/g, '/');
+}
+
+function formatLocalCompileStoredPathLabel(rawPath: string, workspaceRoot: string): string {
+    if (!rawPath) {
+        return '自动扫描';
+    }
+
+    const resolvedPath = resolveConfiguredSettingPath(workspaceRoot, rawPath);
+    if (!fs.existsSync(resolvedPath)) {
+        return `无效: ${rawPath}`;
+    }
+
+    const mudlibRoot = PathConverter.findMudProjectRootFromFile(resolvedPath);
+    if (mudlibRoot && isPathInsideMudlibRoot(mudlibRoot, resolvedPath)) {
+        return getLocalCompileAssetRelativePath(mudlibRoot, resolvedPath);
+    }
+
+    const relativePath = nodePath.relative(workspaceRoot, resolvedPath);
+    if (!relativePath.startsWith('..') && !nodePath.isAbsolute(relativePath)) {
+        return relativePath.replace(/\\/g, '/');
+    }
+
+    return rawPath;
+}
+
+function getLocalCompileDisplayState(): LocalCompileDisplayState {
+    const workspaceRoot = getWorkspaceRoot();
+    const settings = getLocalCompileSettings();
+    return {
+        lpccPathLabel: formatLocalCompileStoredPathLabel(settings.lpccPath ?? '', workspaceRoot),
+        configPathLabel: formatLocalCompileStoredPathLabel(settings.configPath ?? '', workspaceRoot),
+        showWarnings: settings.showWarnings
+    };
+}
+
+function resolveValidLocalCompileAssetPath(
+    workspaceRoot: string,
+    mudlibRoot: string,
+    configuredPath: string | undefined
+): string | undefined {
+    if (!configuredPath) {
+        return undefined;
+    }
+
+    const resolvedPath = resolveConfiguredSettingPath(workspaceRoot, configuredPath);
+    if (
+        !fs.existsSync(resolvedPath)
+        || !fs.statSync(resolvedPath).isFile()
+        || !isPathInsideMudlibRoot(mudlibRoot, resolvedPath)
+    ) {
+        return undefined;
+    }
+
+    return resolvedPath;
+}
+
+function describeInvalidLocalCompileAssetPath(
+    workspaceRoot: string,
+    mudlibRoot: string,
+    configuredPath: string
+): string {
+    const resolvedPath = resolveConfiguredSettingPath(workspaceRoot, configuredPath);
+    if (!fs.existsSync(resolvedPath)) {
+        return '路径不存在';
+    }
+    if (!fs.statSync(resolvedPath).isFile()) {
+        return '路径不是文件';
+    }
+    if (!isPathInsideMudlibRoot(mudlibRoot, resolvedPath)) {
+        return '路径不在当前 mudlib 目录内';
+    }
+    return '路径无效';
+}
+
+function resolveLocalCompileCommandContext(explicitFilePath?: string): LocalCompileCommandContext {
+    const workspaceRoot = getWorkspaceRoot();
+    const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const filePath = explicitFilePath ?? activeFilePath;
+    const probePaths = [
+        filePath,
+        activeFilePath,
+        nodePath.join(workspaceRoot, 'adm', '__lpcc_probe__.c'),
+        nodePath.join(workspaceRoot, 'cmds', '__lpcc_probe__.c')
+    ].filter((value): value is string => !!value);
+
+    for (const probePath of probePaths) {
+        const mudlibRoot = PathConverter.findMudProjectRootFromFile(probePath);
+        if (mudlibRoot) {
+            return {
+                workspaceRoot,
+                mudlibRoot,
+                filePath
+            };
+        }
+    }
+
+    throw new Error('请先打开当前 mudlib 项目中的文件，再选择本地 LPCC 配置');
+}
+
+async function showLocalCompileAssetSavedMessage(
+    descriptor: LocalCompileAssetDescriptor,
+    mudlibRoot: string,
+    selectedPath: string
+): Promise<void> {
+    const relativePath = getLocalCompileAssetRelativePath(mudlibRoot, selectedPath);
+    const message = `已保存当前项目${descriptor.displayName}: ${relativePath}`;
+    messageProvider?.addMessage(message);
+    vscode.window.showInformationMessage(message);
+}
+
+async function selectLocalCompileAssetForCurrentProject(
+    kind: LocalCompileAssetDescriptor['kind']
+): Promise<void> {
+    const contextInfo = resolveLocalCompileCommandContext();
+    const settings = getLocalCompileSettings();
+    const artifacts = discoverMudlibLocalCompileArtifacts(contextInfo.mudlibRoot);
+    const descriptor: LocalCompileAssetDescriptor = kind === 'lpcc'
+        ? {
+            kind,
+            displayName: 'LPCC路径',
+            settingKey: 'gameServerCompiler.localCompile.lpccPath',
+            detectedPaths: artifacts.lpccPaths,
+            configuredPath: settings.lpccPath
+        }
+        : {
+            kind,
+            displayName: '本地编译配置文件',
+            settingKey: 'gameServerCompiler.localCompile.configPath',
+            detectedPaths: artifacts.configPaths,
+            configuredPath: settings.configPath
+        };
+
+    const currentConfiguredPath = resolveValidLocalCompileAssetPath(
+        contextInfo.workspaceRoot,
+        contextInfo.mudlibRoot,
+        descriptor.configuredPath
+    );
+
+    if (descriptor.configuredPath && !currentConfiguredPath) {
+        const reason = describeInvalidLocalCompileAssetPath(
+            contextInfo.workspaceRoot,
+            contextInfo.mudlibRoot,
+            descriptor.configuredPath
+        );
+        void vscode.window.showWarningMessage(
+            `当前保存的${descriptor.displayName}无效（${reason}）: ${descriptor.configuredPath}`
+        );
+    }
+
+    const pathItems = descriptor.detectedPaths
+        .filter(filePath => filePath !== currentConfiguredPath)
+        .map(filePath => ({
+            label: getLocalCompileAssetRelativePath(contextInfo.mudlibRoot, filePath),
+            description: currentConfiguredPath ? '自动扫描到' : '自动扫描到，选中后保存为当前项目配置',
+            detail: filePath,
+            action: 'path' as const,
+            filePath
+        }));
+
+    const quickPickItems = [
+        ...(currentConfiguredPath
+            ? [{
+                label: `当前已选: ${getLocalCompileAssetRelativePath(contextInfo.mudlibRoot, currentConfiguredPath)}`,
+                description: '已保存的当前项目配置',
+                detail: currentConfiguredPath,
+                action: 'path' as const,
+                filePath: currentConfiguredPath
+            }]
+            : []),
+        ...pathItems,
+        {
+            label: descriptor.kind === 'lpcc' ? '手动选择 lpcc.exe...' : '手动选择 config.ini / config.cfg...',
+            description: '从当前 mudlib 目录内选择并保存',
+            action: 'manual' as const
+        },
+        ...(currentConfiguredPath
+            ? [{
+                label: `清空已保存的${descriptor.displayName}`,
+                description: '下次编译时重新自动扫描或再手动选择',
+                action: 'clear' as const
+            }]
+            : [])
+    ];
+
+    const selected = await vscode.window.showQuickPick(quickPickItems, {
+        placeHolder: descriptor.kind === 'lpcc'
+            ? '选择当前项目使用的 lpcc.exe'
+            : '选择当前项目使用的 config.ini 或 config.cfg',
+        ignoreFocusOut: true
+    });
+
+    if (!selected) {
+        return;
+    }
+
+    if (selected.action === 'clear') {
+        await persistLocalCompileSetting(descriptor.settingKey, '');
+        const message = `已清空当前项目${descriptor.displayName}`;
+        messageProvider?.addMessage(message);
+        vscode.window.showInformationMessage(message);
+        return;
+    }
+
+    const selectedPath = selected.action === 'manual'
+        ? await (descriptor.kind === 'lpcc'
+            ? promptForLpccPath(contextInfo.workspaceRoot, contextInfo.mudlibRoot)
+            : promptForConfigPath(contextInfo.workspaceRoot, contextInfo.mudlibRoot))
+        : selected.filePath;
+
+    if (!selectedPath) {
+        return;
+    }
+
+    await persistLocalCompileSetting(
+        descriptor.settingKey,
+        toWorkspaceStoredPath(contextInfo.workspaceRoot, selectedPath)
+    );
+    await showLocalCompileAssetSavedMessage(descriptor, contextInfo.mudlibRoot, selectedPath);
+}
+
+async function toggleLocalCompileWarningsForCurrentProject(): Promise<void> {
+    const { showWarnings } = getLocalCompileSettings();
+    const nextValue = !showWarnings;
+    await persistLocalCompileSetting('gameServerCompiler.localCompile.showWarnings', nextValue);
+    const message = `当前项目本地 LPCC 警告提示已${nextValue ? '开启' : '关闭'}`;
+    messageProvider?.addMessage(message);
+    vscode.window.showInformationMessage(message);
+}
+
+async function configureLocalCompileForCurrentProject(): Promise<void> {
+    const displayState = getLocalCompileDisplayState();
+    const selected = await vscode.window.showQuickPick(
+        [
+            {
+                label: '选择当前项目LPCC路径',
+                description: displayState.lpccPathLabel
+            },
+            {
+                label: '选择当前项目本地编译配置文件',
+                description: displayState.configPathLabel
+            },
+            {
+                label: `警告提示：${displayState.showWarnings ? '开启' : '关闭'}`,
+                description: '切换本地 LPCC 编译时是否提示警告'
+            }
+        ],
+        {
+            placeHolder: '配置当前项目的本地 LPCC 编译设置',
+            ignoreFocusOut: true
+        }
+    );
+
+    if (!selected) {
+        return;
+    }
+
+    if (selected.label.startsWith('选择当前项目LPCC路径')) {
+        await selectLocalCompileAssetForCurrentProject('lpcc');
+        return;
+    }
+
+    if (selected.label.startsWith('选择当前项目本地编译配置文件')) {
+        await selectLocalCompileAssetForCurrentProject('config');
+        return;
+    }
+
+    await toggleLocalCompileWarningsForCurrentProject();
+}
+
+async function chooseDetectedPath(
+    workspaceRoot: string,
+    mudlibRoot: string,
+    paths: string[],
+    placeholder: string,
+    settingKey: string
+): Promise<string | undefined> {
+    if (paths.length === 0) {
+        return undefined;
+    }
+
+    if (paths.length === 1) {
+        return paths[0];
+    }
+
+    const selected = await vscode.window.showQuickPick(
+        paths.map(filePath => ({
+            label: nodePath.relative(mudlibRoot, filePath).replace(/\\/g, '/'),
+            description: filePath,
+            filePath
+        })),
+        {
+            placeHolder: placeholder,
+            ignoreFocusOut: true
+        }
+    );
+
+    if (!selected) {
+        return undefined;
+    }
+
+    await persistLocalCompileSetting(settingKey, toWorkspaceStoredPath(workspaceRoot, selected.filePath));
+    return selected.filePath;
+}
+
+async function promptForLpccPath(workspaceRoot: string, mudlibRoot: string): Promise<string | undefined> {
+    const action = await vscode.window.showWarningMessage(
+        '未在当前 mudlib 目录发现 lpcc.exe。建议将 lpcc.exe 放到 mudlib 目录下，也可以现在手动选择。',
+        '选择 lpcc.exe',
+        '取消'
+    );
+    if (action !== '选择 lpcc.exe') {
+        return undefined;
+    }
+
+    const selected = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectMany: false,
+        canSelectFolders: false,
+        defaultUri: vscode.Uri.file(mudlibRoot),
+        filters: { Executable: ['exe'] },
+        openLabel: '选择 lpcc.exe'
+    });
+
+    const selectedPath = selected?.[0]?.fsPath;
+    if (!selectedPath) {
+        return undefined;
+    }
+    if (nodePath.basename(selectedPath).toLowerCase() !== 'lpcc.exe') {
+        throw new Error('请选择名为 lpcc.exe 的可执行文件');
+    }
+    if (!isPathInsideMudlibRoot(mudlibRoot, selectedPath)) {
+        throw new Error('lpcc.exe 必须位于当前 mudlib 目录内');
+    }
+
+    await persistLocalCompileSetting(
+        'gameServerCompiler.localCompile.lpccPath',
+        toWorkspaceStoredPath(workspaceRoot, selectedPath)
+    );
+    return selectedPath;
+}
+
+async function promptForConfigPath(workspaceRoot: string, mudlibRoot: string): Promise<string | undefined> {
+    const action = await vscode.window.showWarningMessage(
+        '未在当前 mudlib 目录发现 config.ini 或 config.cfg。建议将配置文件放到 mudlib 目录下，也可以现在手动选择。',
+        '选择配置文件',
+        '取消'
+    );
+    if (action !== '选择配置文件') {
+        return undefined;
+    }
+
+    const selected = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectMany: false,
+        canSelectFolders: false,
+        defaultUri: vscode.Uri.file(mudlibRoot),
+        filters: { Config: ['ini', 'cfg'] },
+        openLabel: '选择 config.ini 或 config.cfg'
+    });
+
+    const selectedPath = selected?.[0]?.fsPath;
+    if (!selectedPath) {
+        return undefined;
+    }
+    const fileName = nodePath.basename(selectedPath).toLowerCase();
+    if (fileName !== 'config.ini' && fileName !== 'config.cfg') {
+        throw new Error('请选择名为 config.ini 或 config.cfg 的配置文件');
+    }
+    if (!isPathInsideMudlibRoot(mudlibRoot, selectedPath)) {
+        throw new Error('配置文件必须位于当前 mudlib 目录内');
+    }
+
+    await persistLocalCompileSetting(
+        'gameServerCompiler.localCompile.configPath',
+        toWorkspaceStoredPath(workspaceRoot, selectedPath)
+    );
+    return selectedPath;
+}
+
+async function ensureLocalCompileAssetPath(
+    workspaceRoot: string,
+    mudlibRoot: string,
+    configuredPath: string | undefined,
+    settingKey: 'gameServerCompiler.localCompile.lpccPath' | 'gameServerCompiler.localCompile.configPath',
+    detectedPaths: string[],
+    promptSelector: (workspaceRoot: string, mudlibRoot: string) => Promise<string | undefined>
+): Promise<string | undefined> {
+    if (configuredPath) {
+        const resolvedPath = resolveValidLocalCompileAssetPath(workspaceRoot, mudlibRoot, configuredPath);
+        if (resolvedPath) {
+            return resolvedPath;
+        }
+
+        const reason = describeInvalidLocalCompileAssetPath(workspaceRoot, mudlibRoot, configuredPath);
+        await vscode.window.showWarningMessage(`已配置的路径无效（${reason}），将重新选择: ${configuredPath}`);
+    }
+
+    const detected = await chooseDetectedPath(
+        workspaceRoot,
+        mudlibRoot,
+        detectedPaths,
+        settingKey === 'gameServerCompiler.localCompile.lpccPath'
+            ? '检测到多个 lpcc.exe，请选择一个并记住'
+            : '检测到多个配置文件，请选择一个并记住',
+        settingKey
+    );
+    if (detected) {
+        return detected;
+    }
+
+    return promptSelector(workspaceRoot, mudlibRoot);
+}
+
+async function resolveLocalCompilePlanForFile(filePath: string): Promise<MudlibLocalCompilePlan | undefined> {
+    const workspaceRoot = getWorkspaceRoot();
+    const mudlibRoot = PathConverter.findMudProjectRootFromFile(filePath);
+    if (!mudlibRoot) {
+        throw new Error('无法识别当前文件所属的 mudlib 根目录');
+    }
+
+    const artifacts = discoverMudlibLocalCompileArtifacts(mudlibRoot);
+    const settings = getLocalCompileSettings();
+
+    const lpccPath = await ensureLocalCompileAssetPath(
+        workspaceRoot,
+        mudlibRoot,
+        settings.lpccPath,
+        'gameServerCompiler.localCompile.lpccPath',
+        artifacts.lpccPaths,
+        promptForLpccPath
+    );
+    if (!lpccPath) {
+        return undefined;
+    }
+
+    const configPath = await ensureLocalCompileAssetPath(
+        workspaceRoot,
+        mudlibRoot,
+        settings.configPath,
+        'gameServerCompiler.localCompile.configPath',
+        artifacts.configPaths,
+        promptForConfigPath
+    );
+    if (!configPath) {
+        return undefined;
+    }
+
+    return resolveMudlibLocalCompilePlan({
+        workspaceRoot,
+        filePath,
+        settings: {
+            lpccPath,
+            configPath
+        }
+    });
+}
+
+async function runLocalCompileProcess(
+    plan: MudlibLocalCompilePlan,
+    timeout: number
+): Promise<LocalCompileProcessResult> {
+    return new Promise((resolve, reject) => {
+        execFile(
+            plan.executablePath,
+            [plan.configPath, plan.mudPath],
+            {
+                cwd: plan.workingDir,
+                windowsHide: true,
+                timeout,
+                maxBuffer: 20 * 1024 * 1024
+            },
+            (error, stdout, stderr) => {
+                if (error) {
+                    const execError = error as ExecFileException;
+                    reject(new LocalCompileProcessError(
+                        error.message,
+                        stdout,
+                        stderr,
+                        typeof execError.code === 'number' ? execError.code : null
+                    ));
+                    return;
+                }
+
+                resolve({
+                    exitCode: 0,
+                    stdout,
+                    stderr
+                });
+            }
+        );
+    });
+}
+
+function toVsCodeDiagnosticSeverity(severity: CompilerDiagnosticSeverity): vscode.DiagnosticSeverity {
+    return severity === 'warning'
+        ? vscode.DiagnosticSeverity.Warning
+        : vscode.DiagnosticSeverity.Error;
+}
+
+function resolveLocalCompileDiagnosticLocalPath(
+    mudPath: string,
+    mudlibRoot: string,
+    workspaceRoot: string
+): string | null {
+    try {
+        return PathConverter.resolveLocalPathWithRoot(
+            mudPath,
+            mudlibRoot,
+            workspaceRoot
+        ).localPath;
+    } catch {
+        return null;
+    }
+}
+
+async function maybeRevealLocalCompileProblems(diagnostics: CompilerDiagnostic[]): Promise<void> {
+    const highestSeverity = diagnostics.some(diagnostic => diagnostic.severity === 'error')
+        ? 'error'
+        : diagnostics.some(diagnostic => diagnostic.severity === 'warning')
+            ? 'warning'
+            : null;
+
+    if (!highestSeverity) {
+        return;
+    }
+
+    const mode = vscode.workspace
+        .getConfiguration('gameServerCompiler')
+        .get<ProblemsAutoRevealMode>('ui.autoRevealProblems', 'error');
+
+    if (!shouldRevealProblemsPanel(mode, highestSeverity)) {
+        return;
+    }
+
+    await vscode.commands.executeCommand('workbench.actions.view.problems');
+    await vscode.commands.executeCommand('workbench.action.problems.focus')
+        .then(undefined, () => undefined);
+    await vscode.commands.executeCommand('workbench.panel.markers.view.focus')
+        .then(undefined, () => undefined);
+}
+
+function clearLocalCompileDiagnostics(): void {
+    localCompileDiagnosticCollection.clear();
+}
+
+async function publishLocalCompileDiagnostics(
+    plan: MudlibLocalCompilePlan,
+    diagnostics: CompilerDiagnostic[]
+): Promise<void> {
+    clearLocalCompileDiagnostics();
+
+    const diagnosticsByFile = new Map<string, vscode.Diagnostic[]>();
+
+    for (const diagnostic of diagnostics) {
+        const localPath = resolveLocalCompileDiagnosticLocalPath(
+            diagnostic.file,
+            plan.mudlibRoot,
+            getWorkspaceRoot()
+        );
+
+        if (!localPath) {
+            messageProvider?.addMessage(formatCompilerDiagnosticSummary(diagnostic));
+            continue;
+        }
+
+        const lineNumber = Math.max(diagnostic.line - 1, 0);
+        const startColumn = diagnostic.column ? Math.max(diagnostic.column - 1, 0) : 0;
+        const endColumn = diagnostic.column ? startColumn + 1 : Number.MAX_SAFE_INTEGER;
+        const range = new vscode.Range(
+            new vscode.Position(lineNumber, startColumn),
+            new vscode.Position(lineNumber, endColumn)
+        );
+
+        const vscodeDiagnostic = new vscode.Diagnostic(
+            range,
+            diagnostic.message,
+            toVsCodeDiagnosticSeverity(diagnostic.severity)
+        );
+        vscodeDiagnostic.source = 'LPCC';
+
+        const fileUri = vscode.Uri.file(localPath).toString();
+        const fileDiagnostics = diagnosticsByFile.get(fileUri) ?? [];
+        fileDiagnostics.push(vscodeDiagnostic);
+        diagnosticsByFile.set(fileUri, fileDiagnostics);
+    }
+
+    for (const [uriText, fileDiagnostics] of diagnosticsByFile.entries()) {
+        localCompileDiagnosticCollection.set(vscode.Uri.parse(uriText), fileDiagnostics);
+    }
+
+    await maybeRevealLocalCompileProblems(diagnostics);
+}
+
+function appendLocalCompileDiagnosticMessages(
+    plan: MudlibLocalCompilePlan,
+    diagnostics: CompilerDiagnostic[]
+): void {
+    for (const diagnostic of orderLocalCompileDiagnosticsForTimeline(diagnostics)) {
+        const localPath = resolveLocalCompileDiagnosticLocalPath(
+            diagnostic.file,
+            plan.mudlibRoot,
+            getWorkspaceRoot()
+        );
+
+        if (!localPath) {
+            messageProvider?.addMessage(formatCompilerDiagnosticSummary(diagnostic));
+            continue;
+        }
+
+        messageProvider?.addCompilerDiagnostic({
+            displayPath: diagnostic.file,
+            localPath,
+            line: diagnostic.line,
+            column: diagnostic.column,
+            message: diagnostic.message,
+            severity: diagnostic.severity
+        });
+    }
+}
+
+function writeLocalCompileOutputSummaries(
+    summaryLine: string,
+    errors: CompilerDiagnostic[] = [],
+    warnings: CompilerDiagnostic[] = []
+): void {
+    localCompileOutputChannel.appendLine('');
+    localCompileOutputChannel.appendLine('==== 本地 LPCC 编译结果 ====');
+
+    for (const diagnostic of warnings) {
+        localCompileOutputChannel.appendLine(formatCompilerDiagnosticSummary(diagnostic));
+    }
+
+    for (const diagnostic of errors) {
+        localCompileOutputChannel.appendLine(formatCompilerDiagnosticSummary(diagnostic));
+    }
+
+    localCompileOutputChannel.appendLine(summaryLine);
+}
+
+function extractLocalCompileDiagnostics(result: Pick<LocalCompileProcessResult, 'stdout' | 'stderr'>): CompilerDiagnostic[] {
+    return parseLocalCompileDiagnostics([result.stderr, result.stdout].filter(Boolean).join('\n'));
+}
+
 function isAutoDeclareOnSaveEnabled(): boolean {
     return vscode.workspace
         .getConfiguration('gameServerCompiler')
-        .get<boolean>('compile.autoDeclareFunctionsOnSave', true);
+        .get<boolean>('compile.autoDeclareFunctionsOnSave', false);
 }
 
-function buildAutoDeclarationEdits(document: vscode.TextDocument): vscode.TextEdit[] {
-    if (!isAutoDeclareOnSaveEnabled() || !shouldAutoDeclareForFile(document.fileName)) {
+function buildAutoDeclarationEdits(
+    document: vscode.TextDocument,
+    options?: { ignoreSetting?: boolean }
+): vscode.TextEdit[] {
+    const ignoreSetting = options?.ignoreSetting ?? false;
+    if ((!ignoreSetting && !isAutoDeclareOnSaveEnabled()) || !shouldAutoDeclareForFile(document.fileName)) {
         return [];
     }
 
@@ -93,6 +862,39 @@ function buildAutoDeclarationEdits(document: vscode.TextDocument): vscode.TextEd
     );
 
     return [vscode.TextEdit.replace(fullRange, updatedText)];
+}
+
+async function generateAutoDeclarationsForActiveEditor(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('请先打开一个文件');
+        return;
+    }
+
+    if (!shouldAutoDeclareForFile(editor.document.fileName)) {
+        vscode.window.showErrorMessage('仅支持为 MUD 项目中的 .c 文件生成函数声明');
+        return;
+    }
+
+    const edits = buildAutoDeclarationEdits(editor.document, { ignoreSetting: true });
+    if (edits.length === 0) {
+        messageProvider?.addMessage('函数声明已经是最新的');
+        vscode.window.showInformationMessage('函数声明已经是最新的');
+        return;
+    }
+
+    const fullRange = edits[0].range;
+    const updatedText = edits[0].newText;
+    const applied = await editor.edit(editBuilder => {
+        editBuilder.replace(fullRange, updatedText);
+    });
+
+    if (!applied) {
+        throw new Error('函数声明写入失败');
+    }
+
+    messageProvider?.addMessage('函数声明已更新，等待保存');
+    vscode.window.showInformationMessage('函数声明已更新，等待保存');
 }
 
 // 检查并更新服务器配置
@@ -246,8 +1048,8 @@ export async function activate(context: vscode.ExtensionContext) {
     
     // 创建输出通道
     const outputChannel = vscode.window.createOutputChannel('LPC服务器');
-    // 自动显示输出面板
-    outputChannel.show(true);
+    localCompileOutputChannel = vscode.window.createOutputChannel('LPC本地LPCC');
+    localCompileDiagnosticCollection = vscode.languages.createDiagnosticCollection('lpc-local');
     // 初始化日志管理器
     LogManager.initialize(outputChannel);
 
@@ -271,6 +1073,11 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
         vscode.window.registerWebviewViewProvider('game-server-buttons', buttonProvider, {
             webviewOptions: { retainContextWhenHidden: true }
+        }),
+        vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('gameServerCompiler.localCompile')) {
+                buttonProvider.refreshViewState();
+            }
         })
     );
 
@@ -377,6 +1184,149 @@ export async function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(`编译文件失败: ${errorMessage}`);
             }
         },
+        'game-server-compiler.configureLocalCompile': async () => {
+            outputChannel.appendLine('==== 打开本地 LPCC 设置 ====');
+            try {
+                await configureLocalCompileForCurrentProject();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                outputChannel.appendLine(`打开本地 LPCC 设置失败: ${errorMessage}`);
+                vscode.window.showErrorMessage(`打开本地 LPCC 设置失败: ${errorMessage}`);
+            }
+        },
+        'game-server-compiler.selectLocalCompileLpccPath': async () => {
+            outputChannel.appendLine('==== 选择当前项目 LPCC 路径 ====');
+            try {
+                await selectLocalCompileAssetForCurrentProject('lpcc');
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                outputChannel.appendLine(`选择 LPCC 路径失败: ${errorMessage}`);
+                vscode.window.showErrorMessage(`选择 LPCC 路径失败: ${errorMessage}`);
+            }
+        },
+        'game-server-compiler.selectLocalCompileConfigPath': async () => {
+            outputChannel.appendLine('==== 选择当前项目本地编译配置文件 ====');
+            try {
+                await selectLocalCompileAssetForCurrentProject('config');
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                outputChannel.appendLine(`选择本地编译配置文件失败: ${errorMessage}`);
+                vscode.window.showErrorMessage(`选择本地编译配置文件失败: ${errorMessage}`);
+            }
+        },
+        'game-server-compiler.localCompileCurrentFile': async () => {
+            outputChannel.appendLine('==== 执行本地 LPCC 编译命令 ====');
+            const editor = vscode.window.activeTextEditor;
+            const filePath = editor?.document.uri.fsPath;
+            if (!filePath) {
+                vscode.window.showErrorMessage('请先打开一个文件');
+                return;
+            }
+            if (!isCompilableFile(filePath)) {
+                vscode.window.showErrorMessage('本地 LPCC 只能编译 .c 或 .lpc 文件');
+                return;
+            }
+
+            if (editor.document.isDirty) {
+                const choice = await vscode.window.showWarningMessage(
+                    '当前文件还未保存，本地 LPCC 默认编译磁盘上的内容。是否先保存再编译？',
+                    '保存后编译',
+                    '直接编译',
+                    '取消'
+                );
+                if (choice === '取消' || !choice) {
+                    return;
+                }
+                if (choice === '保存后编译') {
+                    const saved = await editor.document.save();
+                    if (!saved) {
+                        vscode.window.showErrorMessage('文件保存失败，本地 LPCC 编译已取消');
+                        return;
+                    }
+                }
+            }
+
+            let currentPlan: MudlibLocalCompilePlan | undefined;
+            try {
+                currentPlan = await resolveLocalCompilePlanForFile(filePath);
+                if (!currentPlan) {
+                    return;
+                }
+
+                const { timeout, showWarnings } = getLocalCompileSettings();
+                clearLocalCompileDiagnostics();
+                messageProvider?.addMessage(`🏠 本地 LPCC 编译: ${currentPlan.mudPath}`);
+
+                const result = await runLocalCompileProcess(currentPlan, timeout);
+
+                const diagnostics = extractLocalCompileDiagnostics(result);
+                const visibleDiagnostics = filterLocalCompileDiagnostics(diagnostics, showWarnings);
+                if (visibleDiagnostics.length > 0) {
+                    await publishLocalCompileDiagnostics(currentPlan, visibleDiagnostics);
+                    const { errors, warnings } = partitionLocalCompileDiagnostics(visibleDiagnostics);
+                    appendLocalCompileDiagnosticMessages(currentPlan, visibleDiagnostics);
+                    const primaryDiagnostic = pickPrimaryLocalCompileDiagnostic(visibleDiagnostics);
+                    const primarySummary = primaryDiagnostic
+                        ? formatCompilerDiagnosticSummary(primaryDiagnostic)
+                        : '未返回错误详情';
+                    const hasError = errors.length > 0;
+                    if (hasError) {
+                        writeLocalCompileOutputSummaries(
+                            `❌ 本地 LPCC 编译失败: ${primarySummary}`,
+                            errors,
+                            warnings
+                        );
+                        messageProvider?.addMessage(`❌ 本地 LPCC 编译失败: ${primarySummary}`);
+                        vscode.window.showErrorMessage(`本地 LPCC 编译失败: ${primarySummary}`);
+                        return;
+                    }
+
+                    writeLocalCompileOutputSummaries(
+                        `⚠️ 本地 LPCC 编译完成，但有警告: ${primarySummary}`,
+                        [],
+                        warnings
+                    );
+                    messageProvider?.addMessage(`⚠️ 本地 LPCC 编译完成，但有警告: ${primarySummary}`);
+                    vscode.window.showWarningMessage(`本地 LPCC 编译完成，但有警告: ${primarySummary}`);
+                    return;
+                }
+
+                messageProvider?.addMessage(`✅ 本地 LPCC 编译完成: ${currentPlan.mudPath}`);
+                vscode.window.showInformationMessage(`本地 LPCC 编译完成: ${currentPlan.mudPath}`);
+            } catch (error) {
+                const { showWarnings } = getLocalCompileSettings();
+                const processDiagnostics = error instanceof LocalCompileProcessError
+                    ? extractLocalCompileDiagnostics(error)
+                    : [];
+                const visibleProcessDiagnostics = filterLocalCompileDiagnostics(processDiagnostics, showWarnings);
+                const partitionedProcessDiagnostics = partitionLocalCompileDiagnostics(visibleProcessDiagnostics);
+                if (error instanceof LocalCompileProcessError && visibleProcessDiagnostics.length > 0 && currentPlan) {
+                    await publishLocalCompileDiagnostics(currentPlan, visibleProcessDiagnostics);
+                    appendLocalCompileDiagnosticMessages(currentPlan, visibleProcessDiagnostics);
+                }
+
+                const errorMessage = error instanceof Error
+                    ? error instanceof LocalCompileProcessError
+                        ? visibleProcessDiagnostics.length > 0
+                            ? formatCompilerDiagnosticSummary(
+                                pickPrimaryLocalCompileDiagnostic(visibleProcessDiagnostics) ?? visibleProcessDiagnostics[0]
+                            )
+                            : summarizeLocalCompileError(error.stderr, error.stdout)
+                        : error.message
+                    : String(error);
+                if (visibleProcessDiagnostics.length > 0) {
+                    writeLocalCompileOutputSummaries(
+                        `❌ 本地 LPCC 编译失败: ${errorMessage}`,
+                        partitionedProcessDiagnostics.errors,
+                        partitionedProcessDiagnostics.warnings
+                    );
+                } else {
+                    writeLocalCompileOutputSummaries(`❌ 本地 LPCC 编译失败: ${errorMessage}`);
+                }
+                messageProvider?.addMessage(`❌ 本地 LPCC 编译失败: ${errorMessage}`);
+                vscode.window.showErrorMessage(`本地 LPCC 编译失败: ${errorMessage}`);
+            }
+        },
         'game-server-compiler.copyMudPath': async () => {
             outputChannel.appendLine('==== 复制当前文件相对路径 ====');
             const editor = vscode.window.activeTextEditor;
@@ -397,6 +1347,17 @@ export async function activate(context: vscode.ExtensionContext) {
                 outputChannel.appendLine(`复制路径失败: ${error}`);
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 vscode.window.showErrorMessage(`复制路径失败: ${errorMessage}`);
+            }
+        },
+        'game-server-compiler.generateAutoDeclarations': async () => {
+            outputChannel.appendLine('==== 生成当前文件函数声明 ====');
+
+            try {
+                await generateAutoDeclarationsForActiveEditor();
+            } catch (error) {
+                outputChannel.appendLine(`生成函数声明失败: ${error}`);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`生成函数声明失败: ${errorMessage}`);
             }
         },
         'game-server-compiler.compileDir': async () => {
@@ -693,7 +1654,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // 将输出面板添加到订阅中
-    context.subscriptions.push(outputChannel);
+    context.subscriptions.push(outputChannel, localCompileOutputChannel, localCompileDiagnosticCollection);
 
     outputChannel.appendLine('插件初始化完成');
     messageProvider.addMessage('插件初始化完成');

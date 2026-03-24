@@ -20,9 +20,9 @@ test('mudlib fallback parses location and reason into one diagnostic', () => {
         state
     );
     assert.equal(result.consumed, true);
-    assert.equal(result.emittedDiagnostic?.file, '/cmds/wiz/testcmd.c');
-    assert.equal(result.emittedDiagnostic?.line, 584);
-    assert.equal(result.emittedDiagnostic?.column, 16);
+    assert.equal(result.nextState.file, '/cmds/wiz/testcmd.c');
+    assert.equal(result.nextState.line, 584);
+    assert.equal(result.nextState.column, 16);
     state = result.nextState;
 
     result = consumeMudlibCompileFallbackLine(
@@ -60,4 +60,16 @@ test('mudlib fallback suppresses source and stack trace noise after reason', () 
 
     const finalResult = consumeMudlibCompileFallbackLine('普通服务器消息', state);
     assert.equal(finalResult.consumed, false);
+});
+
+test('mudlib fallback does not swallow successful recompile message', () => {
+    const state = createMudlibCompileFallbackState();
+
+    const result = consumeMudlibCompileFallbackLine(
+        '重新编译 /cmds/wiz/testcmd.c：成功！',
+        state
+    );
+
+    assert.equal(result.consumed, false);
+    assert.deepEqual(result.nextState, state);
 });

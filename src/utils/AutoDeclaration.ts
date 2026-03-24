@@ -8,7 +8,9 @@ const LEGACY_AUTO_DECLARATION_END = '// --- AUTO DECLARATIONS END (Buyi)---';
 
 const CONTROL_FLOW_NAMES = new Set(['if', 'for', 'while', 'switch', 'catch', 'foreach']);
 const FUNCTION_DEFINITION_REGEX =
-    /^(?!\s*#)\s*(?:(?<signature>[A-Za-z_][A-Za-z0-9_\s*]*?)\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\((?<args>[^;{}]*)\)\s*(?:\r?\n\s*)?\{/gm;
+    /^(?![ \t]*#)[ \t]*(?:(?<signature>[A-Za-z_][A-Za-z0-9_ \t*]*?)[ \t]+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\((?<args>[^;{}]*)\)[ \t]*(?:\r?\n[ \t]*)?\{/gm;
+const FUNCTION_DECLARATION_REGEX =
+    /^(?![ \t]*#)[ \t]*(?:(?<signature>[A-Za-z_][A-Za-z0-9_ \t*]*?)[ \t]+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\((?<args>[^;{}]*)\)[ \t]*;/gm;
 const INHERIT_DIRECTIVE_REGEX = /^(?:[A-Za-z_][A-Za-z0-9_]*\s+)*inherit\s+[^;]+;$/;
 
 export function shouldAutoDeclareForFile(filePath: string): boolean {
@@ -28,9 +30,13 @@ export function updateAutoDeclarations(content: string): string {
     const eol = detectEol(content);
     const { contentWithoutBlock, hadBlock } = removeAutoDeclarationBlock(content);
     const declarations = collectFunctionDeclarations(contentWithoutBlock);
+    const { contentWithoutDeclarations, removedDeclarations } = removeMatchingDeclarations(
+        contentWithoutBlock,
+        declarations
+    );
 
     if (declarations.length === 0) {
-        return hadBlock ? contentWithoutBlock : content;
+        return hadBlock || removedDeclarations ? contentWithoutDeclarations : content;
     }
 
     const declarationBlock = [
@@ -39,12 +45,12 @@ export function updateAutoDeclarations(content: string): string {
         AUTO_DECLARATION_END
     ].join(eol);
 
-    const insertPos = findInsertPosition(contentWithoutBlock, eol);
-    const prefix = contentWithoutBlock
+    const insertPos = findInsertPosition(contentWithoutDeclarations, eol);
+    const prefix = contentWithoutDeclarations
         .slice(0, insertPos)
         .replace(/(?:\r?\n[ \t]*)+$/, '')
         .replace(/[ \t]+$/, '');
-    const suffix = contentWithoutBlock
+    const suffix = contentWithoutDeclarations
         .slice(insertPos)
         .replace(/^(?:[ \t]*\r?\n)+/, '');
 
@@ -81,21 +87,75 @@ function collectFunctionDeclarations(content: string): string[] {
     const scanContent = stripCommentsPreserveLayout(content);
 
     for (const match of scanContent.matchAll(FUNCTION_DEFINITION_REGEX)) {
-        const name = match.groups?.name?.trim() ?? '';
-        if (!name || CONTROL_FLOW_NAMES.has(name)) {
+        const declaration = buildDeclarationFromMatch(match);
+        if (!declaration) {
             continue;
         }
-
-        const signature = normalizeSignaturePart(match.groups?.signature ?? '');
-        const args = normalizeSignaturePart(match.groups?.args ?? '');
-        const declaration = signature
-            ? `${signature} ${name}(${args});`
-            : `${name}(${args});`;
 
         declarations.add(declaration);
     }
 
     return [...declarations];
+}
+
+function removeMatchingDeclarations(
+    content: string,
+    declarations: readonly string[]
+): { contentWithoutDeclarations: string; removedDeclarations: boolean } {
+    if (declarations.length === 0) {
+        return { contentWithoutDeclarations: content, removedDeclarations: false };
+    }
+
+    const declarationSet = new Set(declarations);
+    const scanContent = stripCommentsPreserveLayout(content);
+    const ranges: Array<{ start: number; end: number }> = [];
+
+    for (const match of scanContent.matchAll(FUNCTION_DECLARATION_REGEX)) {
+        const declaration = buildDeclarationFromMatch(match);
+        if (!declaration || !declarationSet.has(declaration)) {
+            continue;
+        }
+
+        const start = match.index ?? 0;
+        let end = start + match[0].length;
+
+        if (content.startsWith('\r\n', end)) {
+            end += 2;
+        } else if (content[end] === '\n') {
+            end += 1;
+        }
+
+        ranges.push({ start, end });
+    }
+
+    if (ranges.length === 0) {
+        return { contentWithoutDeclarations: content, removedDeclarations: false };
+    }
+
+    let result = '';
+    let cursor = 0;
+
+    for (const range of ranges) {
+        result += content.slice(cursor, range.start);
+        cursor = range.end;
+    }
+
+    result += content.slice(cursor);
+
+    return { contentWithoutDeclarations: result, removedDeclarations: true };
+}
+
+function buildDeclarationFromMatch(match: RegExpMatchArray): string | null {
+    const name = match.groups?.name?.trim() ?? '';
+    if (!name || CONTROL_FLOW_NAMES.has(name)) {
+        return null;
+    }
+
+    const signature = normalizeSignaturePart(match.groups?.signature ?? '');
+    const args = normalizeSignaturePart(match.groups?.args ?? '');
+    return signature
+        ? `${signature} ${name}(${args});`
+        : `${name}(${args});`;
 }
 
 function normalizeSignaturePart(value: string): string {

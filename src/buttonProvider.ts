@@ -4,6 +4,7 @@ import * as path from 'path';
 import { MessageProvider } from './messageProvider';
 import { ConfigManager } from './config/ConfigManager';
 import { LogManager, LogLevel } from './log/LogManager';
+import { PathConverter } from './utils/PathConverter';
 
 interface CustomCommand {
     name: string;
@@ -13,6 +14,12 @@ interface CustomCommand {
 interface FavoriteFile {
     name: string;
     path: string;
+}
+
+interface LocalCompileUiState {
+    lpccPathLabel: string;
+    configPathLabel: string;
+    showWarnings: boolean;
 }
 
 export class ButtonProvider implements vscode.WebviewViewProvider {
@@ -546,6 +553,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         this.updateView();
     }
 
+    public refreshViewState() {
+        this.updateView();
+    }
+
     /**
      * 🚀 获取当前配置信息 - 适配版本2格式
      */
@@ -580,6 +591,47 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         };
     }
 
+    private formatLocalCompilePathLabel(rawPath: string): string {
+        if (!rawPath) {
+            return '自动扫描';
+        }
+
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+        if (!workspaceRoot) {
+            return rawPath;
+        }
+
+        const resolvedPath = path.resolve(path.isAbsolute(rawPath) ? rawPath : path.join(workspaceRoot, rawPath));
+        if (!fs.existsSync(resolvedPath)) {
+            return `无效: ${rawPath}`;
+        }
+
+        const mudlibRoot = PathConverter.findMudProjectRootFromFile(resolvedPath);
+        if (mudlibRoot) {
+            return path.relative(mudlibRoot, resolvedPath).replace(/\\/g, '/');
+        }
+
+        const relativePath = path.relative(workspaceRoot, resolvedPath);
+        if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
+            return relativePath.replace(/\\/g, '/');
+        }
+
+        return rawPath;
+    }
+
+    private getLocalCompileUiState(): LocalCompileUiState {
+        const config = vscode.workspace.getConfiguration('gameServerCompiler');
+        const lpccPath = config.inspect<string>('localCompile.lpccPath')?.workspaceValue;
+        const configPath = config.inspect<string>('localCompile.configPath')?.workspaceValue;
+        const showWarnings = config.inspect<boolean>('localCompile.showWarnings')?.workspaceValue;
+
+        return {
+            lpccPathLabel: this.formatLocalCompilePathLabel(typeof lpccPath === 'string' ? lpccPath.trim() : ''),
+            configPathLabel: this.formatLocalCompilePathLabel(typeof configPath === 'string' ? configPath.trim() : ''),
+            showWarnings: showWarnings ?? true
+        };
+    }
+
     private updateView() {
         if (this._view) {
             this._outputChannel.appendLine('==== 更新视图 ====');
@@ -610,6 +662,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 customEvals: this._customEvals,
                 favoriteFiles: this._favoriteFiles,
                 config: config,
+                localCompile: this.getLocalCompileUiState(),
                 profiles: config.profiles || {},
                 activeProfileId: config.activeProfile || 'default'
             });
@@ -1073,6 +1126,17 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         <span>编译目录</span>
                     </button>
                 </div>
+
+                <div class="button-row">
+                    <button id="localCompile" disabled>
+                        <span class="button-icon">🏠</span>
+                        <span>本地LPCC编译</span>
+                    </button>
+                    <button id="configureLocalCompile" disabled>
+                        <span class="button-icon">⚙️</span>
+                        <span>本地LPCC设置</span>
+                    </button>
+                </div>
                 
                 <div class="dropdown">
                     <button class="dropdown-button" id="customCommandsDropdown" disabled>
@@ -1130,6 +1194,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         <span class="button-icon">📋</span>
                         <span>复制相对路径</span>
                     </button>
+                    <button id="generateAutoDeclarations" disabled>
+                        <span class="button-icon">🧩</span>
+                        <span>生成函数声明</span>
+                    </button>
                 </div>
 
                 <div class="button-row">
@@ -1162,23 +1230,44 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">🎯</span>
-                            <span>当前配置</span>
+                            <span>服务端Update配置</span>
                         </div>
                         <div class="config-value current-profile" id="config-currentProfile">未配置</div>
                     </div>
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">📁</span>
-                            <span>工作目录</span>
+                            <span>服务端工作目录</span>
                         </div>
                         <div class="config-value" id="config-rootPath">未配置</div>
                     </div>
                     <div class="config-item">
                         <div class="config-label">
                             <span class="config-icon">🌐</span>
-                            <span>连接地址</span>
+                            <span>服务端连接地址</span>
                         </div>
                         <div class="config-value" id="config-hostPort">未配置</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">📦</span>
+                            <span>当前LPCC</span>
+                        </div>
+                        <div class="config-value" id="config-localLpcc">自动扫描</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">🧾</span>
+                            <span>当前Config</span>
+                        </div>
+                        <div class="config-value" id="config-localConfig">自动扫描</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">⚠️</span>
+                            <span>警告提示</span>
+                        </div>
+                        <div class="config-value" id="config-localWarnings">开启</div>
                     </div>
                 </div>
 
@@ -1193,6 +1282,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             customEvals: ${JSON.stringify(this._customEvals)},
                             favoriteFiles: ${JSON.stringify(this._favoriteFiles)},
                             config: ${JSON.stringify(this.getCurrentConfig())},
+                            localCompile: ${JSON.stringify(this.getLocalCompileUiState())},
                             profiles: ${JSON.stringify(this.getCurrentConfig().profiles || {})},
                             activeProfileId: '${this.getCurrentConfig().activeProfile || 'default'}'
                         };
@@ -1201,8 +1291,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         const commands = {
                             'connect': 'game-server-compiler.connect',
                             'compile': 'game-server-compiler.compileCurrentFile',
+                            'localCompile': 'game-server-compiler.localCompileCurrentFile',
+                            'configureLocalCompile': 'game-server-compiler.configureLocalCompile',
                             'compileDir': 'game-server-compiler.compileDir',
                             'copyMudPath': 'game-server-compiler.copyMudPath',
+                            'generateAutoDeclarations': 'game-server-compiler.generateAutoDeclarations',
                             'restart': 'game-server-compiler.restart'
                         };
 
@@ -1429,7 +1522,12 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                         if (textSpan) {
                                             textSpan.textContent = state.connected ? '断开服务器' : '连接游戏服务器';
                                         }
-                                    } else if (id === 'copyMudPath') {
+                                    } else if (
+                                        id === 'copyMudPath' ||
+                                        id === 'generateAutoDeclarations' ||
+                                        id === 'localCompile' ||
+                                        id === 'configureLocalCompile'
+                                    ) {
                                         button.disabled = !state.initialized;
                                     } else {
                                         // 其他按钮的处理
@@ -1460,6 +1558,9 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             const rootPathEl = document.getElementById('config-rootPath');
                             const hostPortEl = document.getElementById('config-hostPort');
                             const currentProfileEl = document.getElementById('config-currentProfile');
+                            const localLpccEl = document.getElementById('config-localLpcc');
+                            const localConfigEl = document.getElementById('config-localConfig');
+                            const localWarningsEl = document.getElementById('config-localWarnings');
 
                             // 🚀 从当前激活的配置中获取信息
                             const activeProfile = state.profiles && state.profiles[state.activeProfileId];
@@ -1494,6 +1595,23 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                                     hostPortEl.textContent = '未配置';
                                     hostPortEl.classList.add('empty');
                                 }
+                            }
+
+                            if (localLpccEl) {
+                                const lpccPathLabel = state.localCompile?.lpccPathLabel || '自动扫描';
+                                localLpccEl.textContent = lpccPathLabel;
+                                localLpccEl.classList.toggle('empty', lpccPathLabel === '自动扫描');
+                            }
+
+                            if (localConfigEl) {
+                                const configPathLabel = state.localCompile?.configPathLabel || '自动扫描';
+                                localConfigEl.textContent = configPathLabel;
+                                localConfigEl.classList.toggle('empty', configPathLabel === '自动扫描');
+                            }
+
+                            if (localWarningsEl) {
+                                localWarningsEl.textContent = state.localCompile?.showWarnings ? '开启' : '关闭';
+                                localWarningsEl.classList.remove('empty');
                             }
                         }
 

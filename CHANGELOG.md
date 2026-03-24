@@ -4,6 +4,32 @@
 
 ---
 
+## [Unreleased]
+
+### 🏠 本地 LPCC 编译
+- 新增 `本地LPCC编译当前文件` 命令与按钮，用于在 VS Code 内直接对当前文件执行离线 LPCC 编译。
+- 本地编译只围绕当前文件所属的 mudlib 根目录工作：自动扫描 `lpcc.exe`、`config.ini`、`config.cfg`，手动选择和保存的路径也限定在当前 mudlib 内，不再去管其他工程目录。
+- 新增 `本地LPCC设置` 入口，把 `LPCC 路径`、`配置文件路径`、`是否提示警告` 合并到一个按钮里统一管理，并把结果保存到当前项目的 VS Code 工作区设置。
+- 本地 LPCC 输出现在会复用驱动原生诊断格式解析：`/file line N, column M: message` 这类报错会直接进入消息面板与 Problems，并支持跳到准确列号；编译失败摘要会优先显示真正的错误，而不是前面的警告。
+
+### ✨ 函数声明工作流
+- 新增 `生成当前文件函数声明` 命令，并在控制台把按钮放到 `复制相对路径` 旁边，改为按需手动刷新声明块。
+- `gameServerCompiler.compile.autoDeclareFunctionsOnSave` 继续保留，但默认值改为关闭；需要时可在 VS Code 设置中重新开启保存时自动声明。
+
+### 🧹 自动声明修复
+- 重新生成声明块时，会把文件里与当前函数定义匹配的散落声明一并收拢进 `AUTO DECLARATIONS` 块，避免声明散落在正文各处。
+- 收紧函数头匹配规则，避免把上一行脏文本误吞进声明签名，修复 `aaaavoid int main();` 这类错误声明。
+
+### ✅ 验证
+- `npm run compile` 通过
+- `npm run lint` 通过
+- `node dist/__tests__/AutoDeclaration.test.js` 通过
+- `node dist/__tests__/localCompileDiagnostics.test.js` 通过
+- `node dist/__tests__/localLpcc.test.js` 通过
+- `node dist/__tests__/packageManifest.test.js` 通过
+
+---
+
 ## [1.3.3] - 2026-03-24
 
 ### 🧭 编译诊断与定位

@@ -107,6 +107,68 @@ test('updateAutoDeclarations removes stale block when file no longer contains fu
     ].join('\n'));
 });
 
+test('updateAutoDeclarations collects matching scattered declarations back into auto block', () => {
+    const content = [
+        '#include <ansi.h>',
+        '',
+        'void main();',
+        'protected int helper(int value);',
+        '',
+        'void main() {',
+        '    helper(1);',
+        '}',
+        '',
+        'protected int helper(',
+        '    int value',
+        ') {',
+        '    return value;',
+        '}'
+    ].join('\n');
+
+    const updated = updateAutoDeclarations(content);
+
+    assert.equal(updated, [
+        '#include <ansi.h>',
+        '',
+        '// --- AUTO DECLARATIONS START ---',
+        'void main();',
+        'protected int helper(int value);',
+        '// --- AUTO DECLARATIONS END ---',
+        '',
+        'void main() {',
+        '    helper(1);',
+        '}',
+        '',
+        'protected int helper(',
+        '    int value',
+        ') {',
+        '    return value;',
+        '}'
+    ].join('\n'));
+});
+
+test('updateAutoDeclarations does not absorb previous invalid text into the declaration signature', () => {
+    const content = [
+        'aaaa',
+        'void int main() {',
+        '    return;',
+        '}'
+    ].join('\n');
+
+    const updated = updateAutoDeclarations(content);
+
+    assert.equal(updated, [
+        '// --- AUTO DECLARATIONS START ---',
+        'void int main();',
+        '// --- AUTO DECLARATIONS END ---',
+        '',
+        'aaaa',
+        'void int main() {',
+        '    return;',
+        '}'
+    ].join('\n'));
+});
+
 test('shouldAutoDeclareForFile only enables .c files under mudlib-like locations', () => {
     assert.equal(shouldAutoDeclareForFile('C:/project/mudlib/cmds/test.c'), true);
     assert.equal(shouldAutoDeclareForFile('C:/project/mudlib/cmds/test.h'), false);

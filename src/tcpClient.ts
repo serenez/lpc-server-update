@@ -27,6 +27,7 @@ import {
     createMudlibCompileFallbackState,
     type MudlibCompileFallbackState
 } from './utils/mudlibCompileFallback';
+import { isRemoteCompileSuccessMessage } from './utils/remoteCompileStatus';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -426,7 +427,7 @@ export class TcpClient implements IDisposable {
             }
 
             // 检查编译成功消息
-            if (cleanedMessage.includes('重新编译完毕')) {
+            if (isRemoteCompileSuccessMessage(cleanedMessage)) {
                 this.clearDiagnostics();
                 
                 // 显示成功消息
@@ -591,6 +592,12 @@ export class TcpClient implements IDisposable {
                 this.sendCommand(cleanedContent);
                 break;
             case '015':
+                if (isRemoteCompileSuccessMessage(cleanedContent)) {
+                    this.clearDiagnostics();
+                    this.messageProvider?.addMessage('✅ 编译成功');
+                    this.log('编译成功', LogLevel.INFO);
+                    return;
+                }
                 if (cleanedContent.includes('你的账号在别处登录') || cleanedContent.includes('你被迫下线了')) {
                     this.handleAccountLoggedInElsewhere();
                     return;

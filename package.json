@@ -49,7 +49,10 @@
     "onStartupFinished",
     "onCommand:game-server-compiler.connect",
     "onCommand:game-server-compiler.compileCurrentFile",
+    "onCommand:game-server-compiler.localCompileCurrentFile",
+    "onCommand:game-server-compiler.configureLocalCompile",
     "onCommand:game-server-compiler.copyMudPath",
+    "onCommand:game-server-compiler.generateAutoDeclarations",
     "onCommand:game-server-compiler.compileDir",
     "onCommand:game-server-compiler.sendCommand",
     "onCommand:game-server-compiler.eval",
@@ -141,8 +144,29 @@
         },
         "gameServerCompiler.compile.autoDeclareFunctionsOnSave": {
           "type": "boolean",
+          "default": false,
+          "description": "保存 MUD 项目下的 .c 文件时自动生成函数声明"
+        },
+        "gameServerCompiler.localCompile.lpccPath": {
+          "type": "string",
+          "default": "",
+          "description": "当前项目本地 LPCC 的 lpcc.exe 路径；留空时只在当前 mudlib 目录下自动扫描"
+        },
+        "gameServerCompiler.localCompile.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "当前项目本地 LPCC 的配置文件路径；留空时只在当前 mudlib 目录下自动扫描 config.ini 或 config.cfg"
+        },
+        "gameServerCompiler.localCompile.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "本地 LPCC 编译超时时间（毫秒）",
+          "minimum": 1000
+        },
+        "gameServerCompiler.localCompile.showWarnings": {
+          "type": "boolean",
           "default": true,
-          "description": "保存 mudlib 下的 .c 文件时自动生成函数声明"
+          "description": "当前项目本地 LPCC 编译时是否提示警告"
         },
         "gameServerCompiler.connection.maxRetries": {
           "type": "number",
@@ -234,8 +258,23 @@
         "category": "LPC服务器"
       },
       {
+        "command": "game-server-compiler.localCompileCurrentFile",
+        "title": "本地LPCC编译当前文件",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.configureLocalCompile",
+        "title": "本地LPCC设置",
+        "category": "LPC服务器"
+      },
+      {
         "command": "game-server-compiler.copyMudPath",
         "title": "复制当前文件相对路径",
+        "category": "LPC服务器"
+      },
+      {
+        "command": "game-server-compiler.generateAutoDeclarations",
+        "title": "生成当前文件函数声明",
         "category": "LPC服务器"
       },
       {
@@ -282,8 +321,16 @@
           "when": "gameServerCompiler.isConnected && gameServerCompiler.isLoggedIn"
         },
         {
+          "command": "game-server-compiler.localCompileCurrentFile",
+          "group": "lpcServer@2.2"
+        },
+        {
           "command": "game-server-compiler.copyMudPath",
           "group": "lpcServer@2.5"
+        },
+        {
+          "command": "game-server-compiler.generateAutoDeclarations",
+          "group": "lpcServer@2.6"
         },
         {
           "command": "game-server-compiler.compileDir",

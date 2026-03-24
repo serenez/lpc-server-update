@@ -121,7 +121,6 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
       "compile": {
         "defaultDir": "/cmds",
         "autoCompileOnSave": false,
-        "autoDeclareFunctionsOnSave": true,
         "timeout": 30000,
         "showDetails": true
       },
@@ -150,7 +149,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 🔄 **自动迁移**：旧版本配置会自动迁移到新格式
 - 🧭 **自动识别项目根目录**：优先按 `log/adm/cmds/feature/include/std/inherit` 目录特征识别根目录（命中 >=3）
 - ℹ️ **rootPath 兜底**：`rootPath` 仅作为自动识别失败时的备用路径
-- ✍️ **保存自动生成声明**：`compile.autoDeclareFunctionsOnSave` 默认开启，保存 `mudlib` 下 `.c` 文件时自动刷新函数声明块
+- ✍️ **保存自动生成声明**：`gameServerCompiler.compile.autoDeclareFunctionsOnSave` 属于 VS Code 设置项，默认关闭，需要时可在设置中开启；也可随时点击面板按钮手动刷新当前文件的声明块
 
 <details>
 <summary><b>📖 旧版本格式（V1）自动迁移</b></summary>
@@ -194,7 +193,9 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 📍 **点击直达文件/行/列**：错误卡片与 Problems 都会使用同一份本地绝对路径，支持直接跳到具体列号
 - ⚠️ **Problems 自动弹出**：新增 `gameServerCompiler.ui.autoRevealProblems` 配置，可控制编译错误或警告出现时是否自动弹出 Problems 面板
 - 🧭 **根目录定位更稳**：兼容自动识别到 `duobao` 这类真实 MUD 根目录，而工作区根目录只是上层目录的场景
-- ✍️ **保存自动生成函数声明**：继续保留 1.3.2 的自动声明能力，与自动编译链路无缝衔接
+- ✍️ **手动生成函数声明**：在“复制相对路径”旁边新增按钮，随时为当前文件刷新声明块
+- ⚙️ **保存自动声明改为默认关闭**：保留 `compile.autoDeclareFunctionsOnSave` 开关，需要时再开启保存时自动刷新
+- 🏠 **本地 LPCC 编译一期**：新增本地 LPCC 编译命令与按钮，只在当前 mudlib 根目录下扫描 `lpcc.exe`、`config.ini`、`config.cfg`；支持通过“本地LPCC设置”统一选择当前项目的 LPCC、配置文件和是否提示警告，并把结果保存到当前项目设置
 
 ---
 
@@ -215,9 +216,13 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 
 ### 📝 代码编译
 - 快速编译当前文件
+- 支持本地 LPCC 编译当前文件
+- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg` 与警告提示开关
 - 支持整个目录编译
-- 保存 `mudlib` 下 `.c` 文件时自动生成函数声明
+- 支持一键手动生成当前文件函数声明
+- 可选开启保存时自动生成函数声明（默认关闭）
 - 编译错误统一收敛为单条摘要
+- 本地 LPCC 报错会同步进入 Problems，并支持跳转到具体文件/行/列
 - 错误实时提示与 Problems 定位
 - 点击错误直接跳转到具体文件/行/列
 

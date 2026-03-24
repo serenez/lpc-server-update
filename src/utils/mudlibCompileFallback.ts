@@ -15,7 +15,8 @@ export interface MudlibCompileFallbackState {
 const LOCATION_RE =
     /^编译位置[:：]\s*(?<file>\/\S+?)\s+第\s+(?<line>\d+)\s+行(?:[，,]\s*第\s+(?<column>\d+)\s+列)?$/;
 const REASON_RE = /^编译原因[:：]\s*(?<message>.+)$/;
-const START_RE = /^(?:编译\/载入失败|重新编译)\b/;
+const START_RE =
+    /^(?:编译\/载入失败(?=$|[:：\s])|重新编译(?=.*发生错误[:：]?))/;
 const STACK_ITEM_RE = /^\d+\.\s*/;
 
 export function createMudlibCompileFallbackState(): MudlibCompileFallbackState {

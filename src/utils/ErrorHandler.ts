@@ -56,6 +56,5 @@ export class ErrorHandler {
         // 记录到输出通道
         const outputChannel = vscode.window.createOutputChannel('LPC服务器错误');
         outputChannel.appendLine(`[${new Date().toISOString()}] ${error.stack || error.message}`);
-        outputChannel.show();
     }
-} 
+}

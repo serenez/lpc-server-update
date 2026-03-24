@@ -168,6 +168,21 @@
           "default": true,
           "description": "当前项目本地 LPCC 编译时是否提示警告"
         },
+        "gameServerCompiler.diagnostics.messageLanguage": {
+          "type": "string",
+          "default": "dual",
+          "description": "编译诊断提示语言，影响本地 LPCC、远程编译消息、Problems 与输出摘要",
+          "enum": [
+            "dual",
+            "en",
+            "zh"
+          ],
+          "enumDescriptions": [
+            "中英双语，先显示中文，再保留原始英文",
+            "仅显示驱动原始英文提示",
+            "仅显示中文翻译后的提示"
+          ]
+        },
         "gameServerCompiler.connection.maxRetries": {
           "type": "number",
           "default": 3,

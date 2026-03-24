@@ -5,6 +5,10 @@ import { MessageProvider } from './messageProvider';
 import { ConfigManager } from './config/ConfigManager';
 import { LogManager, LogLevel } from './log/LogManager';
 import { PathConverter } from './utils/PathConverter';
+import {
+    describeCompilerDiagnosticMessageLanguage,
+    normalizeCompilerDiagnosticMessageLanguage
+} from './utils/compilerDiagnosticLocalization';
 
 interface CustomCommand {
     name: string;
@@ -20,6 +24,7 @@ interface LocalCompileUiState {
     lpccPathLabel: string;
     configPathLabel: string;
     showWarnings: boolean;
+    messageLanguageLabel: string;
 }
 
 export class ButtonProvider implements vscode.WebviewViewProvider {
@@ -624,11 +629,15 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         const lpccPath = config.inspect<string>('localCompile.lpccPath')?.workspaceValue;
         const configPath = config.inspect<string>('localCompile.configPath')?.workspaceValue;
         const showWarnings = config.inspect<boolean>('localCompile.showWarnings')?.workspaceValue;
+        const messageLanguage = normalizeCompilerDiagnosticMessageLanguage(
+            config.get<string>('diagnostics.messageLanguage', 'dual')
+        );
 
         return {
             lpccPathLabel: this.formatLocalCompilePathLabel(typeof lpccPath === 'string' ? lpccPath.trim() : ''),
             configPathLabel: this.formatLocalCompilePathLabel(typeof configPath === 'string' ? configPath.trim() : ''),
-            showWarnings: showWarnings ?? true
+            showWarnings: showWarnings ?? true,
+            messageLanguageLabel: describeCompilerDiagnosticMessageLanguage(messageLanguage)
         };
     }
 
@@ -1269,6 +1278,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                         </div>
                         <div class="config-value" id="config-localWarnings">开启</div>
                     </div>
+                    <div class="config-item">
+                        <div class="config-label">
+                            <span class="config-icon">🌏</span>
+                            <span>诊断语言</span>
+                        </div>
+                        <div class="config-value" id="config-diagnosticLanguage">中英双语</div>
+                    </div>
                 </div>
 
                 <script>
@@ -1561,6 +1577,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             const localLpccEl = document.getElementById('config-localLpcc');
                             const localConfigEl = document.getElementById('config-localConfig');
                             const localWarningsEl = document.getElementById('config-localWarnings');
+                            const diagnosticLanguageEl = document.getElementById('config-diagnosticLanguage');
 
                             // 🚀 从当前激活的配置中获取信息
                             const activeProfile = state.profiles && state.profiles[state.activeProfileId];
@@ -1612,6 +1629,11 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             if (localWarningsEl) {
                                 localWarningsEl.textContent = state.localCompile?.showWarnings ? '开启' : '关闭';
                                 localWarningsEl.classList.remove('empty');
+                            }
+                            if (diagnosticLanguageEl) {
+                                diagnosticLanguageEl.textContent =
+                                    state.localCompile?.messageLanguageLabel || '中英双语';
+                                diagnosticLanguageEl.classList.remove('empty');
                             }
                         }
 

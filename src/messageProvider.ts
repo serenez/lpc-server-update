@@ -3,6 +3,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ConfigManager } from './config/ConfigManager';
 import { updateSettingWithFallback, type UpdateTarget } from './utils/configUpdateFallback';
+import { resolveDiagnosticRange } from './utils/diagnosticRange';
+import {
+    formatCompilerDiagnosticMessage,
+    normalizeCompilerDiagnosticMessageLanguage
+} from './utils/compilerDiagnosticLocalization';
 
 interface Config {
     rootPath: string;
@@ -24,6 +29,7 @@ interface CompilerDiagnosticPayload {
     line: number;
     column?: number;
     message: string;
+    rawMessage?: string;
     severity: 'error' | 'warning';
 }
 
@@ -256,8 +262,12 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         
                         // 跳转到错误行并选中
                         const line = message.line - 1; // VSCode 行号从0开始
-                        const column = Math.max((message.column ?? 1) - 1, 0);
-                        const range = new vscode.Range(line, column, line, column + 1);
+                        const { startColumn, endColumn } = resolveDiagnosticRange({
+                            lineText: document.lineAt(line).text,
+                            column: message.column,
+                            message: message.rawMessage ?? message.message ?? ''
+                        });
+                        const range = new vscode.Range(line, startColumn, line, endColumn);
                         editor.selection = new vscode.Selection(range.start, range.start);
                         editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                     } catch (error) {
@@ -272,6 +282,9 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const config = vscode.workspace.getConfiguration('gameServerCompiler');
         const timeFormat = config.get<string>('messages.timeFormat', 'HH:mm:ss');
         const maxCount = config.get<number>('messages.maxCount', 1000);
+        const languageMode = normalizeCompilerDiagnosticMessageLanguage(
+            config.get<string>('diagnostics.messageLanguage', 'dual')
+        );
 
         if (this._messages.length >= maxCount) {
             this._messages = this._messages.slice(-maxCount + 1);
@@ -308,14 +321,20 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const locationText = payload.column
             ? `${payload.displayPath}:${payload.line}:${payload.column}`
             : `${payload.displayPath}:${payload.line}`;
+        const rawMessage = payload.rawMessage ?? payload.message;
+        const displayMessage = formatCompilerDiagnosticMessage(
+            rawMessage,
+            payload.severity,
+            languageMode
+        );
 
         const messageHtml = `<div class="message plugin-message ${severityClass}">
             <div class="message-header">
                 <span class="timestamp">[${timestamp}]</span>
             </div>
             <div class="message-content">
-                <div class="error-link compiler-diagnostic ${severityClass}" data-file="${payload.displayPath}" data-local-path="${payload.localPath}" data-line="${payload.line}" data-column="${payload.column || '1'}">
-                    <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(payload.message)}</span>
+                <div class="error-link compiler-diagnostic ${severityClass}" data-file="${payload.displayPath}" data-local-path="${payload.localPath}" data-line="${payload.line}" data-column="${payload.column || '1'}" data-raw-message="${this.escapeHtml(rawMessage)}">
+                    <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(displayMessage)}</span>
                 </div>
             </div>
         </div>`;
@@ -330,7 +349,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 localPath: payload.localPath,
                 line: payload.line,
                 column: payload.column,
-                message: payload.message
+                message: displayMessage,
+                rawMessage
             }
         });
     }
@@ -1040,15 +1060,17 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                                 const localPath = errorLink.dataset.localPath;
                                 const line = parseInt(errorLink.dataset.line);
                                 const column = parseInt(errorLink.dataset.column || '1');
+                                const rawMessage = errorLink.dataset.rawMessage || '';
                                 
-                                console.log('Clicked error link:', { filePath, localPath, line, column });
+                                console.log('Clicked error link:', { filePath, localPath, line, column, rawMessage });
                                 
                                 vscode.postMessage({
                                     command: 'openFile',
                                     file: filePath,
                                     localPath: localPath,
                                     line: line,
-                                    column: column
+                                    column: column,
+                                    rawMessage: rawMessage
                                 });
                             }
                         });

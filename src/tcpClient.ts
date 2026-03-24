@@ -28,6 +28,14 @@ import {
     type MudlibCompileFallbackState
 } from './utils/mudlibCompileFallback';
 import { isRemoteCompileSuccessMessage } from './utils/remoteCompileStatus';
+import {
+    createFileLineTextResolver,
+    resolveDiagnosticRange
+} from './utils/diagnosticRange';
+import {
+    formatCompilerDiagnosticMessage,
+    normalizeCompilerDiagnosticMessageLanguage
+} from './utils/compilerDiagnosticLocalization';
 
 interface MessageOutput {
     appendLine(value: string): void;
@@ -78,6 +86,7 @@ export class TcpClient implements IDisposable {
     private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
     private diagnosticCollection: vscode.DiagnosticCollection | null = null;
     private configManager: ConfigManager;
+    private readonly resolveDiagnosticLineText = createFileLineTextResolver();
     private firstErrorFile: string = '';
     private errorLine: number = 0;
     private errorMessage: string = '';
@@ -324,6 +333,12 @@ export class TcpClient implements IDisposable {
             this.mudlibCompileFallbackState = mudlibFallbackResult.nextState;
             if (mudlibFallbackResult.emittedDiagnostic) {
                 const diagnostic = mudlibFallbackResult.emittedDiagnostic;
+                const languageMode = this.getCompilerDiagnosticLanguageMode();
+                const displayMessage = formatCompilerDiagnosticMessage(
+                    diagnostic.message,
+                    diagnostic.severity,
+                    languageMode
+                );
                 const isFirstError = !this.firstErrorFile;
                 if (isFirstError) {
                     this.firstErrorFile = diagnostic.file;
@@ -339,24 +354,26 @@ export class TcpClient implements IDisposable {
                         line: diagnostic.line,
                         column: diagnostic.column,
                         message: diagnostic.message,
+                        rawMessage: diagnostic.message,
                         severity: diagnostic.severity
                     });
                 } else {
-                    const summary = formatCompilerDiagnosticSummary(diagnostic);
+                    const summary = formatCompilerDiagnosticSummary(diagnostic, { languageMode });
                     this.messageProvider?.addMessage(summary);
                 }
                 this.log(
-                    `编译失败: ${diagnostic.file}:${diagnostic.line}${diagnostic.column ? `:${diagnostic.column}` : ''} ${diagnostic.message}`,
+                    `编译失败: ${diagnostic.file}:${diagnostic.line}${diagnostic.column ? `:${diagnostic.column}` : ''} ${displayMessage}`,
                     LogLevel.ERROR
                 );
                 this.showCompileError(
                     diagnostic.file,
                     diagnostic.line,
-                    diagnostic.message,
+                    displayMessage,
                     localPath,
                     diagnostic.column,
                     vscode.DiagnosticSeverity.Error,
-                    isFirstError
+                    isFirstError,
+                    diagnostic.message
                 );
                 this.maybeRevealProblemsPanel('error');
                 return;
@@ -368,12 +385,18 @@ export class TcpClient implements IDisposable {
 
             const compilerDiagnostic = parseCompilerDiagnosticHeader(cleanedMessage);
             if (compilerDiagnostic) {
+                const languageMode = this.getCompilerDiagnosticLanguageMode();
+                const displayMessage = formatCompilerDiagnosticMessage(
+                    compilerDiagnostic.message,
+                    compilerDiagnostic.severity,
+                    languageMode
+                );
                 this.suppressCompilerContinuation = true;
                 this.compilerMessageFilterState = beginCompilerMessageFilterState();
 
                 // 处理 debug_eval_file.c 的错误显示
                 if (compilerDiagnostic.file === '/debug_eval_file.c') {
-                    const evalErrorMsg = `❌ Eval指令执行错误: ${compilerDiagnostic.message}`;
+                    const evalErrorMsg = `❌ Eval指令执行错误: ${displayMessage}`;
                     this.messageProvider?.addMessage(evalErrorMsg);
                     this.log(evalErrorMsg, LogLevel.ERROR, false);
                     return;
@@ -399,28 +422,30 @@ export class TcpClient implements IDisposable {
                         line: compilerDiagnostic.line,
                         column: compilerDiagnostic.column,
                         message: compilerDiagnostic.message,
+                        rawMessage: compilerDiagnostic.message,
                         severity: compilerDiagnostic.severity
                     });
                 } else {
-                    const summary = formatCompilerDiagnosticSummary(compilerDiagnostic);
+                    const summary = formatCompilerDiagnosticSummary(compilerDiagnostic, { languageMode });
                     this.messageProvider?.addMessage(summary);
                 }
                 if (compilerDiagnostic.severity === 'warning') {
-                    this.outputChannel.appendLine(`[警告] 编译警告: ${location} ${compilerDiagnostic.message}`);
+                    this.outputChannel.appendLine(`[警告] 编译警告: ${location} ${displayMessage}`);
                 } else {
-                    this.log(`编译失败: ${location} ${compilerDiagnostic.message}`, LogLevel.ERROR);
+                    this.log(`编译失败: ${location} ${displayMessage}`, LogLevel.ERROR);
                 }
 
                 this.showCompileError(
                     compilerDiagnostic.file,
                     compilerDiagnostic.line,
-                    compilerDiagnostic.message,
+                    displayMessage,
                     localPath,
                     compilerDiagnostic.column,
                     compilerDiagnostic.severity === 'warning'
                         ? vscode.DiagnosticSeverity.Warning
                         : vscode.DiagnosticSeverity.Error,
-                    isFirstError
+                    isFirstError,
+                    compilerDiagnostic.message
                 );
                 this.maybeRevealProblemsPanel(compilerDiagnostic.severity);
                 return;
@@ -1693,7 +1718,8 @@ export class TcpClient implements IDisposable {
         localPath: string | null,
         column?: number,
         severity: vscode.DiagnosticSeverity = vscode.DiagnosticSeverity.Error,
-        revealToEditor: boolean = true
+        revealToEditor: boolean = true,
+        rawMessage: string = message
     ) {
         try {
             if (!localPath) {
@@ -1704,8 +1730,12 @@ export class TcpClient implements IDisposable {
             const fileUri = vscode.Uri.file(localPath);
 
             const lineNumber = line - 1;
-            const startColumn = column ? Math.max(column - 1, 0) : 0;
-            const endColumn = column ? startColumn + 1 : Number.MAX_VALUE;
+            const lineText = this.resolveDiagnosticLineText(localPath, line);
+            const { startColumn, endColumn } = resolveDiagnosticRange({
+                lineText,
+                column,
+                message: rawMessage
+            });
 
             const range = new vscode.Range(
                 new vscode.Position(lineNumber, startColumn),
@@ -1737,6 +1767,14 @@ export class TcpClient implements IDisposable {
         } catch (error) {
             this.log(`显示编译错误失败: ${error}`, LogLevel.ERROR);
         }
+    }
+
+    private getCompilerDiagnosticLanguageMode() {
+        return normalizeCompilerDiagnosticMessageLanguage(
+            vscode.workspace
+                .getConfiguration('gameServerCompiler')
+                .get<string>('diagnostics.messageLanguage', 'dual')
+        );
     }
 
     private resolveDiagnosticLocalPath(mudPath: string): string | null {

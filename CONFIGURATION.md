@@ -185,6 +185,22 @@
 "gameServerCompiler.compile.autoCompileOnSave": false
 ```
 
+### 编译诊断配置 (diagnostics)
+
+#### `gameServerCompiler.diagnostics.messageLanguage`
+
+- **类型**: string
+- **默认值**: `"dual"`
+- **可选值**:
+  - `"dual"` - 中英双语，先显示中文，再保留原始英文
+  - `"en"` - 仅显示驱动原始英文提示
+  - `"zh"` - 仅显示中文翻译后的提示
+- **说明**: 控制编译诊断的显示语言，统一作用于本地 LPCC、远程编译消息、Problems 面板和输出摘要
+
+```json
+"gameServerCompiler.diagnostics.messageLanguage": "dual"
+```
+
 ### 连接配置 (connection)
 
 #### `gameServerCompiler.connection.maxRetries`

@@ -12,6 +12,7 @@ import { checkCompilePreconditions } from './utils/CompilePreconditions';
 import { shouldAutoDeclareForFile, updateAutoDeclarations } from './utils/AutoDeclaration';
 import {
     formatCompilerDiagnosticSummary,
+    type CompilerDiagnosticFormatOptions,
     type CompilerDiagnostic,
     type CompilerDiagnosticSeverity
 } from './utils/compilerDiagnostics';
@@ -29,6 +30,16 @@ import {
     partitionLocalCompileDiagnostics,
     pickPrimaryLocalCompileDiagnostic
 } from './utils/localCompileDiagnostics';
+import {
+    createFileLineTextResolver,
+    resolveDiagnosticRange
+} from './utils/diagnosticRange';
+import {
+    describeCompilerDiagnosticMessageLanguage,
+    formatCompilerDiagnosticMessage,
+    normalizeCompilerDiagnosticMessageLanguage,
+    type CompilerDiagnosticMessageLanguage
+} from './utils/compilerDiagnosticLocalization';
 
 let tcpClient: TcpClient;
 let messageProvider: MessageProvider;
@@ -63,6 +74,7 @@ interface MudPathResolution {
 interface LocalCompileSettings extends LocalLpccSettings {
     timeout: number;
     showWarnings: boolean;
+    messageLanguage: CompilerDiagnosticMessageLanguage;
 }
 
 interface LocalCompileProcessResult {
@@ -89,6 +101,7 @@ interface LocalCompileDisplayState {
     lpccPathLabel: string;
     configPathLabel: string;
     showWarnings: boolean;
+    messageLanguageLabel: string;
 }
 
 class LocalCompileProcessError extends Error {
@@ -151,12 +164,22 @@ function getLocalCompileSettings(): LocalCompileSettings {
     const lpccPath = config.inspect<string>('localCompile.lpccPath')?.workspaceValue;
     const configPath = config.inspect<string>('localCompile.configPath')?.workspaceValue;
     const showWarnings = config.inspect<boolean>('localCompile.showWarnings')?.workspaceValue;
+    const messageLanguage = normalizeCompilerDiagnosticMessageLanguage(
+        config.get<string>('diagnostics.messageLanguage', 'dual')
+    );
 
     return {
         lpccPath: typeof lpccPath === 'string' ? lpccPath.trim() : '',
         configPath: typeof configPath === 'string' ? configPath.trim() : '',
         timeout: config.get<number>('localCompile.timeout', 30000),
-        showWarnings: showWarnings ?? true
+        showWarnings: showWarnings ?? true,
+        messageLanguage
+    };
+}
+
+function getCompilerDiagnosticFormatOptions(): CompilerDiagnosticFormatOptions {
+    return {
+        languageMode: getLocalCompileSettings().messageLanguage
     };
 }
 
@@ -223,7 +246,8 @@ function getLocalCompileDisplayState(): LocalCompileDisplayState {
     return {
         lpccPathLabel: formatLocalCompileStoredPathLabel(settings.lpccPath ?? '', workspaceRoot),
         configPathLabel: formatLocalCompileStoredPathLabel(settings.configPath ?? '', workspaceRoot),
-        showWarnings: settings.showWarnings
+        showWarnings: settings.showWarnings,
+        messageLanguageLabel: describeCompilerDiagnosticMessageLanguage(settings.messageLanguage)
     };
 }
 
@@ -421,6 +445,48 @@ async function toggleLocalCompileWarningsForCurrentProject(): Promise<void> {
     vscode.window.showInformationMessage(message);
 }
 
+async function selectCompilerDiagnosticMessageLanguageForCurrentProject(): Promise<void> {
+    const { messageLanguage } = getLocalCompileSettings();
+    const selected = await vscode.window.showQuickPick(
+        [
+            {
+                label: '中英双语',
+                description: '默认；先显示中文，再保留原始英文',
+                value: 'dual' as const
+            },
+            {
+                label: '仅英文',
+                description: '保留驱动原始英文提示',
+                value: 'en' as const
+            },
+            {
+                label: '仅中文',
+                description: '只显示中文翻译后的提示',
+                value: 'zh' as const
+            }
+        ].map(item => ({
+            ...item,
+            detail: item.value === messageLanguage ? '当前生效' : undefined
+        })),
+        {
+            placeHolder: '选择当前项目的编译诊断提示语言',
+            ignoreFocusOut: true
+        }
+    );
+
+    if (!selected) {
+        return;
+    }
+
+    await persistLocalCompileSetting(
+        'gameServerCompiler.diagnostics.messageLanguage',
+        selected.value
+    );
+    const message = `当前项目编译诊断提示语言已切换为：${selected.label}`;
+    messageProvider?.addMessage(message);
+    vscode.window.showInformationMessage(message);
+}
+
 async function configureLocalCompileForCurrentProject(): Promise<void> {
     const displayState = getLocalCompileDisplayState();
     const selected = await vscode.window.showQuickPick(
@@ -436,6 +502,10 @@ async function configureLocalCompileForCurrentProject(): Promise<void> {
             {
                 label: `警告提示：${displayState.showWarnings ? '开启' : '关闭'}`,
                 description: '切换本地 LPCC 编译时是否提示警告'
+            },
+            {
+                label: `诊断提示语言：${displayState.messageLanguageLabel}`,
+                description: '影响本地 LPCC、远程编译消息、Problems 与输出摘要'
             }
         ],
         {
@@ -455,6 +525,11 @@ async function configureLocalCompileForCurrentProject(): Promise<void> {
 
     if (selected.label.startsWith('选择当前项目本地编译配置文件')) {
         await selectLocalCompileAssetForCurrentProject('config');
+        return;
+    }
+
+    if (selected.label.startsWith('诊断提示语言：')) {
+        await selectCompilerDiagnosticMessageLanguageForCurrentProject();
         return;
     }
 
@@ -742,8 +817,10 @@ async function publishLocalCompileDiagnostics(
     diagnostics: CompilerDiagnostic[]
 ): Promise<void> {
     clearLocalCompileDiagnostics();
+    const diagnosticFormatOptions = getCompilerDiagnosticFormatOptions();
 
     const diagnosticsByFile = new Map<string, vscode.Diagnostic[]>();
+    const resolveLineText = createFileLineTextResolver();
 
     for (const diagnostic of diagnostics) {
         const localPath = resolveLocalCompileDiagnosticLocalPath(
@@ -753,13 +830,20 @@ async function publishLocalCompileDiagnostics(
         );
 
         if (!localPath) {
-            messageProvider?.addMessage(formatCompilerDiagnosticSummary(diagnostic));
+            messageProvider?.addMessage(
+                formatCompilerDiagnosticSummary(diagnostic, diagnosticFormatOptions)
+            );
             continue;
         }
 
         const lineNumber = Math.max(diagnostic.line - 1, 0);
-        const startColumn = diagnostic.column ? Math.max(diagnostic.column - 1, 0) : 0;
-        const endColumn = diagnostic.column ? startColumn + 1 : Number.MAX_SAFE_INTEGER;
+        const lineText = resolveLineText(localPath, diagnostic.line);
+        const { startColumn, endColumn } = resolveDiagnosticRange({
+            lineText,
+            column: diagnostic.column,
+            message: diagnostic.message,
+            kind: diagnostic.kind
+        });
         const range = new vscode.Range(
             new vscode.Position(lineNumber, startColumn),
             new vscode.Position(lineNumber, endColumn)
@@ -767,7 +851,11 @@ async function publishLocalCompileDiagnostics(
 
         const vscodeDiagnostic = new vscode.Diagnostic(
             range,
-            diagnostic.message,
+            formatCompilerDiagnosticMessage(
+                diagnostic.message,
+                diagnostic.severity,
+                diagnosticFormatOptions.languageMode ?? 'en'
+            ),
             toVsCodeDiagnosticSeverity(diagnostic.severity)
         );
         vscodeDiagnostic.source = 'LPCC';
@@ -789,6 +877,7 @@ function appendLocalCompileDiagnosticMessages(
     plan: MudlibLocalCompilePlan,
     diagnostics: CompilerDiagnostic[]
 ): void {
+    const diagnosticFormatOptions = getCompilerDiagnosticFormatOptions();
     for (const diagnostic of orderLocalCompileDiagnosticsForTimeline(diagnostics)) {
         const localPath = resolveLocalCompileDiagnosticLocalPath(
             diagnostic.file,
@@ -797,7 +886,9 @@ function appendLocalCompileDiagnosticMessages(
         );
 
         if (!localPath) {
-            messageProvider?.addMessage(formatCompilerDiagnosticSummary(diagnostic));
+            messageProvider?.addMessage(
+                formatCompilerDiagnosticSummary(diagnostic, diagnosticFormatOptions)
+            );
             continue;
         }
 
@@ -807,6 +898,7 @@ function appendLocalCompileDiagnosticMessages(
             line: diagnostic.line,
             column: diagnostic.column,
             message: diagnostic.message,
+            rawMessage: diagnostic.message,
             severity: diagnostic.severity
         });
     }
@@ -815,17 +907,22 @@ function appendLocalCompileDiagnosticMessages(
 function writeLocalCompileOutputSummaries(
     summaryLine: string,
     errors: CompilerDiagnostic[] = [],
-    warnings: CompilerDiagnostic[] = []
+    warnings: CompilerDiagnostic[] = [],
+    formatOptions: CompilerDiagnosticFormatOptions = getCompilerDiagnosticFormatOptions()
 ): void {
     localCompileOutputChannel.appendLine('');
     localCompileOutputChannel.appendLine('==== 本地 LPCC 编译结果 ====');
 
     for (const diagnostic of warnings) {
-        localCompileOutputChannel.appendLine(formatCompilerDiagnosticSummary(diagnostic));
+        localCompileOutputChannel.appendLine(
+            formatCompilerDiagnosticSummary(diagnostic, formatOptions)
+        );
     }
 
     for (const diagnostic of errors) {
-        localCompileOutputChannel.appendLine(formatCompilerDiagnosticSummary(diagnostic));
+        localCompileOutputChannel.appendLine(
+            formatCompilerDiagnosticSummary(diagnostic, formatOptions)
+        );
     }
 
     localCompileOutputChannel.appendLine(summaryLine);
@@ -1075,7 +1172,10 @@ export async function activate(context: vscode.ExtensionContext) {
             webviewOptions: { retainContextWhenHidden: true }
         }),
         vscode.workspace.onDidChangeConfiguration(event => {
-            if (event.affectsConfiguration('gameServerCompiler.localCompile')) {
+            if (
+                event.affectsConfiguration('gameServerCompiler.localCompile')
+                || event.affectsConfiguration('gameServerCompiler.diagnostics.messageLanguage')
+            ) {
                 buttonProvider.refreshViewState();
             }
         })
@@ -1253,7 +1353,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                const { timeout, showWarnings } = getLocalCompileSettings();
+                const { timeout, showWarnings, messageLanguage } = getLocalCompileSettings();
                 clearLocalCompileDiagnostics();
                 messageProvider?.addMessage(`🏠 本地 LPCC 编译: ${currentPlan.mudPath}`);
 
@@ -1267,14 +1367,15 @@ export async function activate(context: vscode.ExtensionContext) {
                     appendLocalCompileDiagnosticMessages(currentPlan, visibleDiagnostics);
                     const primaryDiagnostic = pickPrimaryLocalCompileDiagnostic(visibleDiagnostics);
                     const primarySummary = primaryDiagnostic
-                        ? formatCompilerDiagnosticSummary(primaryDiagnostic)
+                        ? formatCompilerDiagnosticSummary(primaryDiagnostic, { languageMode: messageLanguage })
                         : '未返回错误详情';
                     const hasError = errors.length > 0;
                     if (hasError) {
                         writeLocalCompileOutputSummaries(
                             `❌ 本地 LPCC 编译失败: ${primarySummary}`,
                             errors,
-                            warnings
+                            warnings,
+                            { languageMode: messageLanguage }
                         );
                         messageProvider?.addMessage(`❌ 本地 LPCC 编译失败: ${primarySummary}`);
                         vscode.window.showErrorMessage(`本地 LPCC 编译失败: ${primarySummary}`);
@@ -1284,7 +1385,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     writeLocalCompileOutputSummaries(
                         `⚠️ 本地 LPCC 编译完成，但有警告: ${primarySummary}`,
                         [],
-                        warnings
+                        warnings,
+                        { languageMode: messageLanguage }
                     );
                     messageProvider?.addMessage(`⚠️ 本地 LPCC 编译完成，但有警告: ${primarySummary}`);
                     vscode.window.showWarningMessage(`本地 LPCC 编译完成，但有警告: ${primarySummary}`);
@@ -1294,7 +1396,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 messageProvider?.addMessage(`✅ 本地 LPCC 编译完成: ${currentPlan.mudPath}`);
                 vscode.window.showInformationMessage(`本地 LPCC 编译完成: ${currentPlan.mudPath}`);
             } catch (error) {
-                const { showWarnings } = getLocalCompileSettings();
+                const { showWarnings, messageLanguage } = getLocalCompileSettings();
                 const processDiagnostics = error instanceof LocalCompileProcessError
                     ? extractLocalCompileDiagnostics(error)
                     : [];
@@ -1309,7 +1411,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     ? error instanceof LocalCompileProcessError
                         ? visibleProcessDiagnostics.length > 0
                             ? formatCompilerDiagnosticSummary(
-                                pickPrimaryLocalCompileDiagnostic(visibleProcessDiagnostics) ?? visibleProcessDiagnostics[0]
+                                pickPrimaryLocalCompileDiagnostic(visibleProcessDiagnostics) ?? visibleProcessDiagnostics[0],
+                                { languageMode: messageLanguage }
                             )
                             : summarizeLocalCompileError(error.stderr, error.stdout)
                         : error.message
@@ -1318,7 +1421,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     writeLocalCompileOutputSummaries(
                         `❌ 本地 LPCC 编译失败: ${errorMessage}`,
                         partitionedProcessDiagnostics.errors,
-                        partitionedProcessDiagnostics.warnings
+                        partitionedProcessDiagnostics.warnings,
+                        { languageMode: messageLanguage }
                     );
                 } else {
                     writeLocalCompileOutputSummaries(`❌ 本地 LPCC 编译失败: ${errorMessage}`);

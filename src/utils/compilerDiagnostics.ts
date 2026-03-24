@@ -1,3 +1,5 @@
+import { formatCompilerDiagnosticMessage } from './compilerDiagnosticLocalization';
+
 export type CompilerDiagnosticSeverity = 'error' | 'warning';
 
 export type CompilerDiagnosticKind =
@@ -21,6 +23,10 @@ export interface CompilerDiagnostic {
 export interface CompilerMessageFilterState {
     awaitingSourceLine: boolean;
     awaitingCaretLine: boolean;
+}
+
+export interface CompilerDiagnosticFormatOptions {
+    languageMode?: import('./compilerDiagnosticLocalization').CompilerDiagnosticMessageLanguage;
 }
 
 const COMPILER_HEADER_RE =
@@ -87,13 +93,21 @@ export function parseCompilerDiagnosticHeader(line: string): CompilerDiagnostic 
     };
 }
 
-export function formatCompilerDiagnosticSummary(diagnostic: CompilerDiagnostic): string {
+export function formatCompilerDiagnosticSummary(
+    diagnostic: CompilerDiagnostic,
+    options?: CompilerDiagnosticFormatOptions
+): string {
     const icon = diagnostic.severity === 'warning' ? '⚠️' : '❌';
     const location = diagnostic.column
         ? `${diagnostic.file}:${diagnostic.line}:${diagnostic.column}`
         : `${diagnostic.file}:${diagnostic.line}`;
+    const message = formatCompilerDiagnosticMessage(
+        diagnostic.message,
+        diagnostic.severity,
+        options?.languageMode ?? 'en'
+    );
 
-    return `${icon} ${location} ${diagnostic.message}`;
+    return `${icon} ${location} ${message}`;
 }
 
 export function consumeCompilerNoiseLine(

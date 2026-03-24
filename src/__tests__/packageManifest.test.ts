@@ -95,3 +95,12 @@ test('package manifest exposes local lpcc configure command', () => {
         )
     );
 });
+
+test('package manifest keeps compiler diagnostic language in dual mode by default', () => {
+    const manifest = loadManifest();
+    const setting = manifest.contributes?.configuration?.properties?.[
+        'gameServerCompiler.diagnostics.messageLanguage'
+    ];
+
+    assert.equal(setting?.default, 'dual');
+});

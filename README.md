@@ -84,6 +84,7 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 | [🔌 API文档](API.md) | 完整的API接口文档和使用说明 |
 | [💻 开发指南](DEVELOPMENT.md) | 开发环境搭建、调试和贡献指南 |
 | [⚙️ 配置文档](CONFIGURATION.md) | 详细的配置选项和参数说明 |
+| [🌏 编译诊断中文化](COMPILER_DIAGNOSTIC_LOCALIZATION.md) | 驱动英文诊断与插件中文提示的完整对照表 |
 | [🧩 模块设计](MODULES.md) | 各功能模块的详细设计文档 |
 | [🧪 测试文档](TESTING.md) | 测试策略和测试用例说明 |
 
@@ -195,7 +196,8 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 - 🧭 **根目录定位更稳**：兼容自动识别到 `duobao` 这类真实 MUD 根目录，而工作区根目录只是上层目录的场景
 - ✍️ **手动生成函数声明**：在“复制相对路径”旁边新增按钮，随时为当前文件刷新声明块
 - ⚙️ **保存自动声明改为默认关闭**：保留 `compile.autoDeclareFunctionsOnSave` 开关，需要时再开启保存时自动刷新
-- 🏠 **本地 LPCC 编译一期**：新增本地 LPCC 编译命令与按钮，只在当前 mudlib 根目录下扫描 `lpcc.exe`、`config.ini`、`config.cfg`；支持通过“本地LPCC设置”统一选择当前项目的 LPCC、配置文件和是否提示警告，并把结果保存到当前项目设置
+- 🏠 **本地 LPCC 编译一期**：新增本地 LPCC 编译命令与按钮，只在当前 mudlib 根目录下扫描 `lpcc.exe`、`config.ini`、`config.cfg`；支持通过“本地LPCC设置”统一选择当前项目的 LPCC、配置文件、警告提示和诊断语言，并把结果保存到当前项目设置
+- 🌏 **编译诊断支持中英双语**：新增 `gameServerCompiler.diagnostics.messageLanguage`，默认 `dual`；可切换为仅英文或仅中文，统一作用于本地 LPCC、远程编译消息、Problems 与输出摘要
 
 ---
 
@@ -217,13 +219,14 @@ RemoteSSH 免密登录WindowsServer服务器使用教程：
 ### 📝 代码编译
 - 快速编译当前文件
 - 支持本地 LPCC 编译当前文件
-- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg` 与警告提示开关
+- 支持通过“本地LPCC设置”统一配置当前项目使用的 `lpcc.exe`、`config.ini/config.cfg`、警告提示开关与诊断提示语言
 - 支持整个目录编译
 - 支持一键手动生成当前文件函数声明
 - 可选开启保存时自动生成函数声明（默认关闭）
 - 编译错误统一收敛为单条摘要
 - 本地 LPCC 报错会同步进入 Problems，并支持跳转到具体文件/行/列
 - 错误实时提示与 Problems 定位
+- 编译诊断支持英文 / 中文 / 中英双语三种显示模式
 - 点击错误直接跳转到具体文件/行/列
 
 ### 💻 命令管理

@@ -85,6 +85,10 @@ test('package manifest exposes local lpcc command and settings', () => {
         properties['gameServerCompiler.localCompile.autoCompileOnSave']?.default,
         false
     );
+    assert.equal(
+        properties['gameServerCompiler.messages.dedupeWindow']?.default,
+        1000
+    );
 });
 
 test('package manifest exposes local lpcc configure command', () => {

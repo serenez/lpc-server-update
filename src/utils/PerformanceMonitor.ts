@@ -101,13 +101,20 @@ export class PerformanceMonitor {
     const metrics = this.getAllMetrics();
     const memoryUsage = process.memoryUsage();
 
-    // 生成摘要
-    const slowest = metrics.sort((a, b) => b.avgTime - a.avgTime)[0];
-    const mostFrequent = metrics.sort((a, b) => b.count - a.count)[0];
-
     let summary = `性能报告 (运行时间: ${(uptime / 1000).toFixed(2)}秒)\n`;
-    summary += `最慢操作: ${slowest.name} (平均${slowest.avgTime.toFixed(2)}ms)\n`;
-    summary += `最频繁操作: ${mostFrequent.name} (${mostFrequent.count}次)\n`;
+    if (metrics.length === 0) {
+      summary += '暂无性能数据，请先执行相关操作后再查看。\n';
+    } else {
+      const slowest = metrics.reduce((previous, current) =>
+        current.avgTime > previous.avgTime ? current : previous
+      );
+      const mostFrequent = metrics.reduce((previous, current) =>
+        current.count > previous.count ? current : previous
+      );
+
+      summary += `最慢操作: ${slowest.name} (平均${slowest.avgTime.toFixed(2)}ms)\n`;
+      summary += `最频繁操作: ${mostFrequent.name} (${mostFrequent.count}次)\n`;
+    }
 
     return {
       uptime,

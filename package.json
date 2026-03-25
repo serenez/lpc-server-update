@@ -1,8 +1,8 @@
 {
   "name": "lpc-server-update",
-  "displayName": "LPC-Server-UPDATE MUD工具",
-  "version": "1.4.2",
-  "description": "用于连接和管理LPC游戏服务器的VS Code扩展",
+  "displayName": "LPC-FluffOS-Toolkit",
+  "version": "1.4.3",
+  "description": "用于 FluffOS / LPC MUD 开发的 VS Code 扩展",
   "publisher": "BUYI-ZMuy",
   "author": {
     "name": "不一",
@@ -63,7 +63,7 @@
   ],
   "contributes": {
     "configuration": {
-      "title": "LPC服务器连接器",
+      "title": "LPC-FluffOS-Toolkit",
       "properties": {
         "gameServerCompiler.messages.maxCount": {
           "type": "number",
@@ -103,6 +103,13 @@
           "type": "boolean",
           "default": false,
           "description": "显示服务器原始数据（不做格式化）"
+        },
+        "gameServerCompiler.messages.dedupeWindow": {
+          "type": "number",
+          "default": 1000,
+          "description": "消息去重时间窗口（毫秒），窗口内重复消息只保留一次",
+          "minimum": 0,
+          "maximum": 10000
         },
         "gameServerCompiler.messages.colors": {
           "type": "object",
@@ -371,8 +378,7 @@
     }
   },
   "dependencies": {
-    "iconv-lite": "^0.6.3",
-    "net": "^1.0.2"
+    "iconv-lite": "^0.6.3"
   },
   "devDependencies": {
     "@types/node": "^16.18.126",

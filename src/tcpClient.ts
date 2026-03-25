@@ -7,9 +7,7 @@ import * as iconv from 'iconv-lite';
 import { MessageParser } from './utils/messageParser';
 import { IDisposable } from './interfaces/IDisposable';
 import { ConfigManager } from './config/ConfigManager';
-import { CircularBuffer } from './utils/CircularBuffer';
 import { MessageDeduplicator } from './utils/MessageDeduplicator';
-import { MessageWorkerManager } from './workers/MessageWorkerManager';
 import { PerformanceMonitor } from './utils/PerformanceMonitor';
 import { PathConverter } from './utils/PathConverter';
 import {
@@ -40,22 +38,10 @@ import {
     buildCompileOutputStartLines
 } from './utils/compileOutput';
 
-interface MessageOutput {
-    appendLine(value: string): void;
-    show(preserveFocus?: boolean): void;
-}
-
-interface MessageChannels {
-    debug: MessageOutput;
-    server: MessageOutput;
-}
-
 export class TcpClient implements IDisposable {
     private socket: net.Socket | null = null;
     private connected: boolean = false;
     private loggedIn: boolean = false;
-    private versionVerified: boolean = false;
-    private isFirstData: boolean = true;
     private outputChannel: vscode.OutputChannel;
     private compileOutputChannel: vscode.OutputChannel;
     private buttonProvider: ButtonProvider;
@@ -70,24 +56,13 @@ export class TcpClient implements IDisposable {
     private isFirstConnect = true;
     private isFirstLogin = true;
     private ESC = '\x1b';
-    private retryCount: number = 0;
     private retryTimer: NodeJS.Timeout | null = null;
     private config: vscode.WorkspaceConfiguration;
-    private resultBuffer: string = '';
-    private isCollectingResult: boolean = false;
     private muyBuffer: string = '';
     private isCollectingMuy: boolean = false;
     private encoding: string = 'UTF8';
-
-    // 🚀 性能优化：使用环形缓冲区替代简单数组
-    private messageBuffer: CircularBuffer<string>;
     private messageDeduplicator: MessageDeduplicator;
-    private messageWorkerManager: MessageWorkerManager;
-    // 🚀 性能优化：性能监控器
     private performanceMonitor: PerformanceMonitor;
-
-    private bufferTimer: NodeJS.Timeout | null = null;
-    private readonly BUFFER_FLUSH_INTERVAL = 100; // 100ms
     private diagnosticCollection: vscode.DiagnosticCollection | null = null;
     private configManager: ConfigManager;
     private configDisposables: vscode.Disposable[] = [];
@@ -116,7 +91,6 @@ export class TcpClient implements IDisposable {
     private static readonly ANSI_UNDERLINE_BOLD = /\x1b\[4[0-7];1m/g;
     private static readonly ANSI_ALL = /\x1b\[[0-9;]*[mK]/g;
     private static readonly CONTROL_CODES = /[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]/g;
-    private static readonly WHITESPACE = /\s+/g;
 
     constructor(
         outputChannel: vscode.OutputChannel,
@@ -150,25 +124,16 @@ export class TcpClient implements IDisposable {
             }
         }));
 
-        // 🚀 性能优化：初始化环形缓冲区（容量1000条消息）
         const maxMessages = this.config.get<number>('messages.maxCount', 1000);
-        this.messageBuffer = new CircularBuffer<string>(maxMessages);
-
-        // 🚀 性能优化：初始化消息去重器
         const dedupeWindow = this.config.get<number>('messages.dedupeWindow', 1000);
         this.messageDeduplicator = new MessageDeduplicator({
             timeWindow: dedupeWindow,
             maxCacheSize: maxMessages
         });
 
-        // 🚀 性能优化：初始化Worker管理器（处理编码转换）
-        this.messageWorkerManager = new MessageWorkerManager();
-
-        // 🚀 性能优化：初始化性能监控器
         this.performanceMonitor = PerformanceMonitor.getInstance();
 
         this.initSocket();
-        this.initMessageBuffer();
 
         // 创建诊断集合
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
@@ -197,8 +162,7 @@ export class TcpClient implements IDisposable {
             this.log(`当前编码: ${this.encoding}`, LogLevel.DEBUG);
             
             this.reconnectAttempts = 0;
-            this.isFirstData = true;
-          this.log('已连接到游戏服务器', LogLevel.INFO);
+            this.log('已连接到游戏服务器', LogLevel.INFO);
         });
 
         let buffer = MessageParser.createEmptyBuffer();
@@ -237,8 +201,6 @@ export class TcpClient implements IDisposable {
             } catch (error) {
                 this.log(`消息处理错误: ${error}`, LogLevel.ERROR);
                 buffer = MessageParser.createEmptyBuffer();
-                this.resultBuffer = '';
-                this.isCollectingResult = false;
             }
         });
 
@@ -656,41 +618,6 @@ export class TcpClient implements IDisposable {
 
     private cleanAnsiCodes(text: string): string {
         return text.replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
-    }
-
-    private convertAnsiToVscode(text: string): string {
-        let result = text;
-        
-        const colorMap: { [key: string]: string } = {
-            '\\[30m': '\x1b[30m',
-            '\\[31m': '\x1b[31m',
-            '\\[32m': '\x1b[32m',
-            '\\[33m': '\x1b[33m',
-            '\\[34m': '\x1b[34m',
-            '\\[35m': '\x1b[35m',
-            '\\[36m': '\x1b[36m',
-            '\\[37m': '\x1b[37m',
-            '\\[1;30m': '\x1b[1;30m',
-            '\\[1;31m': '\x1b[1;31m',
-            '\\[1;32m': '\x1b[1;32m',
-            '\\[1;33m': '\x1b[1;33m',
-            '\\[1;34m': '\x1b[1;34m',
-            '\\[1;35m': '\x1b[1;35m',
-            '\\[1;36m': '\x1b[1;36m',
-            '\\[1;37m': '\x1b[1;37m',
-            '\\[2;37;0m': '\x1b[0m',
-        };
-
-        for (const [key, value] of Object.entries(colorMap)) {
-            const pattern = this.ESC + key;
-            result = result.replace(new RegExp(pattern, 'g'), value);
-        }
-
-        result = result.replace(/\$zj#/g, ' | ');
-        result = result.replace(/\$z2#/g, ' | ');
-        result = result.replace(/\$br#/g, '\n');
-
-        return result;
     }
 
     private log(message: string, level: LogLevel = LogLevel.INFO, showNotification: boolean = false) {
@@ -1269,9 +1196,6 @@ export class TcpClient implements IDisposable {
         
         this.setConnectionState(false);
         this.setLoginState(false);
-        this.versionVerified = false;
-        this.isFirstData = true;
-        
         this.isCollectingMuy = false;
         this.muyBuffer = '';
         
@@ -1556,27 +1480,6 @@ export class TcpClient implements IDisposable {
         return [key, value];
     }
 
-    /**
-     * 🚀 优化：使用环形缓冲区的消息处理
-     * 内存优化：避免内存无限增长
-     */
-    private processMessageBuffer() {
-        if (!this.messageBuffer.isEmpty()) {
-            const messages = this.messageBuffer.getAll();
-            this.messageBuffer.clear();
-
-            for (const msg of messages) {
-                this.processMessage(msg);
-            }
-        }
-    }
-
-    private initMessageBuffer() {
-        this.bufferTimer = setInterval(() => {
-            this.processMessageBuffer();
-        }, this.BUFFER_FLUSH_INTERVAL);
-    }
-
     private encodeMessage(message: string): Buffer {
         try {
             this.outputChannel.appendLine('==== 编码消息 ====');
@@ -1653,11 +1556,6 @@ export class TcpClient implements IDisposable {
      * 确保没有内存泄漏
      */
     dispose() {
-        // 清理定时器
-        if (this.bufferTimer) {
-            clearInterval(this.bufferTimer);
-            this.bufferTimer = null;
-        }
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -1665,11 +1563,6 @@ export class TcpClient implements IDisposable {
         if (this.retryTimer) {
             clearTimeout(this.retryTimer);
             this.retryTimer = null;
-        }
-
-        // 清理Worker线程
-        if (this.messageWorkerManager) {
-            this.messageWorkerManager.dispose();
         }
 
         // 清理socket
@@ -1836,45 +1729,6 @@ export class TcpClient implements IDisposable {
         };
     }
 
-    private showDiagnostics(filePath: string, line: number, message: string) {
-        try {
-            // 将 MUD 路径转换为本地文件路径
-            const localPath = this.convertToLocalPath(filePath);
-            if (!localPath) {
-                this.log(`无法转换文件路径: ${filePath}`, LogLevel.ERROR);
-                return;
-            }
-
-            const uri = vscode.Uri.file(localPath);
-            const diagnostic = new vscode.Diagnostic(
-                new vscode.Range(line, 0, line, 100),  // 整行标记为错误
-                message,
-                vscode.DiagnosticSeverity.Error
-            );
-
-            this.diagnosticCollection?.set(uri, [diagnostic]);
-        } catch (error) {
-            this.log(`显示诊断信息失败: ${error}`, LogLevel.ERROR);
-        }
-    }
-
-    private convertToLocalPath(mudPath: string): string | null {
-        try {
-            // 移除开头的斜杠
-            const relativePath = mudPath.startsWith('/') ? mudPath.substring(1) : mudPath;
-            // 获取工作区根目录
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                return null;
-            }
-            // 组合完整路径
-            return vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), relativePath).fsPath;
-        } catch (error) {
-            this.log(`转换文件路径失败: ${error}`, LogLevel.ERROR);
-            return null;
-        }
-    }
-
     // 添加命令发送前的状态检查
     private checkState(): boolean {
         this.log(`🔍 检查状态:`, LogLevel.DEBUG);
@@ -1892,21 +1746,6 @@ export class TcpClient implements IDisposable {
             return false;
         }
         return true;
-    }
-
-    // eval命令
-    public async eval(code: string) {
-        if (!this.checkState()) {
-            return;
-        }
-        this.log(`⚡ 执行代码: ${code}`, LogLevel.DEBUG);
-        await this.sendCommand(`eval ${code}`, 'Eval命令');
-    }
-
-    // 添加状态重置方法
-    public resetState() {
-        this.pendingCommand = false;
-        this.clearDiagnostics();
     }
 
     private handleAccountLoggedInElsewhere() {

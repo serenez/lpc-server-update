@@ -303,7 +303,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                 <span class="timestamp">[${timestamp}]</span>
             </div>
             <div class="message-content">
-                <div class="error-link compiler-diagnostic ${severityClass}" data-file="${payload.displayPath}" data-local-path="${payload.localPath}" data-line="${payload.line}" data-column="${payload.column || '1'}" data-raw-message="${this.escapeHtml(rawMessage)}">
+                <div class="error-link compiler-diagnostic ${severityClass}" data-file="${this.escapeAttribute(payload.displayPath)}" data-local-path="${this.escapeAttribute(payload.localPath)}" data-line="${payload.line}" data-column="${payload.column || '1'}" data-raw-message="${this.escapeAttribute(rawMessage)}">
                     <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(displayMessage)}</span>
                 </div>
             </div>
@@ -341,6 +341,13 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             system: '#9C27B0'
         });
         const showIcons = config.get<boolean>('messages.showIcons', true);
+        const nonce = this.getNonce();
+        const contentSecurityPolicy = [
+            "default-src 'none'",
+            `img-src ${webview.cspSource} data:`,
+            `style-src ${webview.cspSource} 'nonce-${nonce}'`,
+            `script-src 'nonce-${nonce}'`
+        ].join('; ');
 
         const style = `
             body {
@@ -859,7 +866,8 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
+                <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
+                <style nonce="${nonce}">
                     ${style}
                 </style>
             </head>
@@ -889,7 +897,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                         ❌
                     </button>
                 </div>
-                <script>
+                <script nonce="${nonce}">
                     (function() {
                         const vscode = acquireVsCodeApi();
                         const messageContainer = document.getElementById('message-container');
@@ -1304,7 +1312,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         const indentStr = '  '.repeat(indent);
         
         if (typeof value === 'string') {
-            return `<span class="string">"${value}"</span>`;
+            return `<span class="string">"${this.escapeHtml(value)}"</span>`;
         }
         if (typeof value === 'number') {
             return `<span class="number">${value}</span>`;
@@ -1321,7 +1329,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             // 检查是否是对象引用数组
             if (value[0] && typeof value[0] === 'object' && 'path' in value[0]) {
                 const items = value.map(item => 
-                    `${indentStr}  ${item.path}<span class="punctuation">#</span><span class="number">${item.id}</span> <span class="punctuation">(</span><span class="string">"${item.name}"</span><span class="punctuation">)</span>`
+                    `${indentStr}  ${this.escapeHtml(String(item.path))}<span class="punctuation">#</span><span class="number">${item.id}</span> <span class="punctuation">(</span><span class="string">"${this.escapeHtml(String(item.name))}"</span><span class="punctuation">)</span>`
                 ).join('<span class="punctuation">,</span>\n');
                 return `<span class="punctuation">({</span>\n${items}\n${indentStr}<span class="punctuation">})</span>`;
             }
@@ -1336,22 +1344,34 @@ export class MessageProvider implements vscode.WebviewViewProvider {
             if (entries.length === 0) {return '<span class="punctuation">{}</span>';}
             
             const formattedEntries = entries.map(([key, val]) => {
-                const formattedKey = `<span class="key">"${key}"</span>`;
+                const formattedKey = `<span class="key">"${this.escapeHtml(key)}"</span>`;
                 return `${indentStr}  ${formattedKey}<span class="punctuation">:</span> ${this.formatTSValue(val, indent + 1)}`;
             }).join('<span class="punctuation">,</span>\n');
             
             return `<span class="punctuation">{</span>\n${formattedEntries}\n${indentStr}<span class="punctuation">}</span>`;
         }
-        return String(value);
+        return this.escapeHtml(String(value));
     }
 
     private wrapInCodeBlock(code: string, language: string = 'typescript'): string {
         // 为每一行添加行号和格式化
-        const lines = code.split('\n').map((line, i) => 
-            `<span class="line">${line}</span>`
+        const lines = code.split('\n').map(line => 
+            `<span class="line">${this.escapeHtml(line)}</span>`
         ).join('\n');
         
         return `<pre class="code-block ${language}"><code>${lines}</code></pre>`;
+    }
+
+    private escapeAttribute(text: string): string {
+        return this.escapeHtml(text);
+    }
+
+    private escapeTextContent(text: string): string {
+        return this.escapeHtml(text).replace(/\r?\n/g, '<br>');
+    }
+
+    private getNonce(): string {
+        return Math.random().toString(36).slice(2, 12);
     }
 
     private escapeHtml(text: string): string {
@@ -1404,7 +1424,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
         // 根据消息内容判断类型
         let type = 'info';
         let extraClass = '';
-        let formattedMessage = message;
+        let formattedMessage = this.escapeTextContent(message);
 
         // 检查消息类型
         if (message.startsWith('✅')) {
@@ -1458,7 +1478,7 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <span class="timestamp">[${timestamp}]</span>
                 </div>
                 <div class="message-content">
-                    <div class="error-link compiler-diagnostic ${severityClass}" data-file="${filePath}" data-line="${line}" data-column="${column || '1'}">
+                    <div class="error-link compiler-diagnostic ${severityClass}" data-file="${this.escapeAttribute(filePath)}" data-line="${line}" data-column="${column || '1'}">
                         <span class="compiler-diagnostic-line">${icon} ${this.escapeHtml(locationText)} ${this.escapeHtml(errorMessage)}</span>
                     </div>
                 </div>
@@ -1487,12 +1507,12 @@ export class MessageProvider implements vscode.WebviewViewProvider {
                     <span class="timestamp">[${timestamp}]</span>
                 </div>
                 <div class="message-content">
-                    <div class="error-link" data-file="${filePath}" data-line="${line}">
+                    <div class="error-link" data-file="${this.escapeAttribute(filePath)}" data-line="${line}">
                         <div class="error-title">❌ 编译错误</div>
                         <div class="error-details">
-                            <div class="error-file">📄 ${filePath}</div>
+                            <div class="error-file">📄 ${this.escapeHtml(filePath)}</div>
                             <div class="error-line">📍 第 ${line} 行</div>
-                            <div class="error-message">⚠️ ${errorMessage}</div>
+                            <div class="error-message">⚠️ ${this.escapeHtml(errorMessage)}</div>
                         </div>
                     </div>
                 </div>

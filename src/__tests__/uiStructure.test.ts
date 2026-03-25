@@ -190,10 +190,6 @@ test('source awaits async command senders instead of fire-and-forget invocation'
         tcpClientSource,
         /public async sendRestartCommand\(\): Promise<void>[\s\S]*await this\.sendCommand\('shutdown', '重启命令'\);/
     );
-    assert.match(
-        tcpClientSource,
-        /public async eval\(code: string\)[\s\S]*await this\.sendCommand\(`eval \$\{code\}`, 'Eval命令'\);/
-    );
     assert.match(tcpClientSource, /void this\.sendUpdateCommand\(dependencyFile\)\.catch\(/);
     assert.match(tcpClientSource, /void this\.sendCommand\(cleanedContent\)\.catch\(/);
 });
@@ -219,4 +215,30 @@ test('tcp client source prevents overlapping reconnect attempts', () => {
     assert.match(tcpClientSource, /private connectPromise: Promise<void> \| null = null;/);
     assert.match(tcpClientSource, /if \(this\.connectPromise\) \{\s*return this\.connectPromise;\s*\}/);
     assert.match(tcpClientSource, /if \(this\.connected \|\| this\.connectPromise\) \{/);
+});
+
+test('message provider source hardens webview rendering with CSP and escaped text', () => {
+    const source = readSource('messageProvider.ts');
+
+    assert.match(source, /Content-Security-Policy/);
+    assert.match(source, /private escapeTextContent\(text: string\): string/);
+    assert.match(source, /let formattedMessage = this\.escapeTextContent\(message\);/);
+    assert.match(source, /data-file="\$\{this\.escapeAttribute\(filePath\)\}"/);
+    assert.match(source, /data-local-path="\$\{this\.escapeAttribute\(payload\.localPath\)\}"/);
+});
+
+test('performance monitor source handles empty metrics safely', () => {
+    const source = readSource('utils/PerformanceMonitor.ts');
+
+    assert.match(source, /if \(metrics\.length === 0\)/);
+    assert.match(source, /暂无性能数据，请先执行相关操作后再查看/);
+});
+
+test('tcp client source removes unused worker buffering path', () => {
+    const source = readSource('tcpClient.ts');
+
+    assert.doesNotMatch(source, /MessageWorkerManager/);
+    assert.doesNotMatch(source, /CircularBuffer/);
+    assert.doesNotMatch(source, /initMessageBuffer\(/);
+    assert.doesNotMatch(source, /processMessageBuffer\(/);
 });

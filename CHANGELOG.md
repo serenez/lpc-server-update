@@ -27,9 +27,20 @@
 - 修复无工作区时的初始化崩溃入口；扩展现在会先初始化配置，再创建按钮面板，避免 `ButtonProvider` 提前触发配置读取异常。
 - 修复扩展停用时释放不完整的问题；`deactivate()` 现在会完整释放 `tcpClient`、`buttonProvider`、消息面板和配置管理器。
 
+### 🛡️ 消息面板安全与运行时健壮性
+- 修复消息面板将服务器普通消息直接拼接为 HTML 并通过 `innerHTML` 注入到 webview 的风险；现在普通消息、原始消息、诊断路径和诊断原文都会先做转义，再写入界面。
+- 为消息面板补充 `Content-Security-Policy` 与 `nonce`，收紧脚本和样式来源，降低 webview 内联脚本与恶意内容被执行的风险。
+- 修复性能报告在尚未产生任何指标时直接访问空数据导致报错的问题；首次启动或重置性能指标后查看报告时，现在会返回明确的“暂无性能数据”提示。
+
+### 🧹 未接线代码与依赖清理
+- 清理 `TcpClient` 中未真正接入消息主链路的 worker / buffer 预留逻辑，移除空转定时器与无实际收益的启动期开销。
+- 删除已脱离当前实现的死代码文件，包括 `MessageProcessor`、`MessageHandler`、`CircularBuffer`、`MessageWorkerManager` 及对应 worker 文件，减少维护负担和误导性的“伪优化”实现。
+- 移除多余的 npm `net` 依赖，保留 Node 内建 `net` 模块用法；同时把消息去重时间窗口正式暴露为 `gameServerCompiler.messages.dedupeWindow` 配置项，避免运行时读取未声明配置。
+
 ### ✅ 回归验证
 - `npm run compile` 通过
 - `npm run lint` 通过
+- `npm test` 通过（104/104）
 - `Get-ChildItem dist\\__tests__\\*.js | Sort-Object Name | ForEach-Object { node $_.FullName }` 全量通过
 
 ---

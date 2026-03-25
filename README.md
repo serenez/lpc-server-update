@@ -1,4 +1,4 @@
-# 🎮 LPC-Server-UPDATE MUD工具
+# 🎮 LPC-FluffOS-Toolkit
 
 <div align="center">
 
@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
-面向 LPC / MUD 项目的 VS Code 扩展，主要解决两件事：远程 Update，以及用 `lpcc.exe` 先在本地把当前文件编译一遍并直接看到报错位置。
+面向 FluffOS / LPC / MUD 项目的 VS Code 扩展，主要解决两件事：远程 Update，以及用 `lpcc.exe` 先在本地把当前文件编译一遍并直接看到报错位置。
 
 [🌐 English README](README.en.md) • [📋 版本更新记录](CHANGELOG.md) • [⚙️ 配置文档](CONFIGURATION.md) • [🌏 诊断中文化对照表](COMPILER_DIAGNOSTIC_LOCALIZATION.md)
 

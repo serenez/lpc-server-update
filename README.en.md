@@ -1,4 +1,4 @@
-# 🎮 LPC-Server-UPDATE MUD Tools
+# 🎮 LPC-FluffOS-Toolkit
 
 <div align="center">
 
@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
-A VS Code extension for LPC / MUD projects, mainly built for two jobs: remote update, and local `lpcc.exe` compile with direct error positioning in the editor.
+A VS Code extension for FluffOS / LPC / MUD projects, mainly built for two jobs: remote update, and local `lpcc.exe` compile with direct error positioning in the editor.
 
 [简体中文 README](README.md) • [Changelog](CHANGELOG.md) • [Configuration](CONFIGURATION.md) • [Compiler Diagnostic Localization Table](COMPILER_DIAGNOSTIC_LOCALIZATION.md)
 

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.4.2-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
+[![Version](https://img.shields.io/badge/version-1.4.3-blue.svg?style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=BUYI-ZMuy.lpc-server-update)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![QQ](https://img.shields.io/badge/QQ-279631638-red.svg?style=for-the-badge)](https://qm.qq.com/cgi-bin/qm/qr?k=XcJNDH3-8WTdP0snH8g88KbiXyeIcNI5)
 
@@ -31,6 +31,7 @@
 - 可以自己决定是否显示警告
 - 可以切换成只看中文、只看英文，或者中英双语
 - 可以开启保存后自动本地编译，而且不会在保存时弹窗打断
+- 手动点 `本地LPCC编译` 时，会显示明显的编译中状态和进度提示，并临时锁住其他操作按钮，避免误触和重复点击
 - 就算当前焦点在输出栏、Problems 或侧栏，插件也会优先使用你当前还开着的代码文件
 
 所以这套本地编译功能，不只是“打印一段英文报错”。  

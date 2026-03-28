@@ -63,6 +63,7 @@ export class ConfigManager {
     private lastConfigMtime: number = 0; // 🚀 记录最后修改时间
     private configReloadTimer: NodeJS.Timeout | null = null; // 防抖定时器
     private saveQueue: Promise<void> = Promise.resolve();
+    private disposed: boolean = false;
 
     private constructor() {
         this.eventEmitter = new EventEmitter();
@@ -455,7 +456,7 @@ export class ConfigManager {
 
     private watchConfig(): void {
         // 🚀 避免重复启动监听器
-        if (this.isWatchingConfig) {
+        if (this.disposed || this.isWatchingConfig) {
             return;
         }
 
@@ -475,7 +476,10 @@ export class ConfigManager {
             this.isWatchingConfig = true;
 
             // 🚀 使用 fs.watchFile 替代 fs.watch，监听文件的修改时间戳
-            fs.watchFile(this.configPath, { persistent: true, interval: 1000 }, (curr, prev) => {
+            fs.watchFile(this.configPath, { persistent: false, interval: 1000 }, (curr, prev) => {
+                if (this.disposed) {
+                    return;
+                }
                 // 检查文件的修改时间是否真的变化了
                 if (curr.mtimeMs === this.lastConfigMtime) {
                     return; // 没有变化，跳过
@@ -660,6 +664,11 @@ export class ConfigManager {
 
     // 清理资源
     dispose(): void {
+        if (this.disposed) {
+            return;
+        }
+        this.disposed = true;
+
         this.disposables.forEach(d => d.dispose());
         this.disposables = [];
 

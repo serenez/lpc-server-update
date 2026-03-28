@@ -1,7 +1,7 @@
 {
   "name": "lpc-server-update",
   "displayName": "LPC-FluffOS-Toolkit",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "用于 FluffOS / LPC MUD 开发的 VS Code 扩展",
   "publisher": "BUYI-ZMuy",
   "author": {

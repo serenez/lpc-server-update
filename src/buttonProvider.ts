@@ -26,6 +26,14 @@ interface LocalCompileUiState {
     showWarnings: boolean;
     autoCompileOnSave: boolean;
     messageLanguageLabel: string;
+    activity: LocalCompileActivityState;
+}
+
+interface LocalCompileActivityState {
+    inProgress: boolean;
+    statusText: string;
+    detailText: string;
+    blockingUi: boolean;
 }
 
 function createSilentOutputChannel(): vscode.OutputChannel {
@@ -41,6 +49,15 @@ function createSilentOutputChannel(): vscode.OutputChannel {
     } as vscode.OutputChannel;
 }
 
+function createIdleLocalCompileActivityState(): LocalCompileActivityState {
+    return {
+        inProgress: false,
+        statusText: '',
+        detailText: '',
+        blockingUi: false
+    };
+}
+
 export class ButtonProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _isConnected: boolean = false;
@@ -52,6 +69,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     private _favoriteFiles: FavoriteFile[] = [];
     private _outputChannel: vscode.OutputChannel;
     private _configManager: ConfigManager; // 🚀 新增：配置管理器引用
+    private _localCompileActivity: LocalCompileActivityState = createIdleLocalCompileActivityState();
 
     constructor(private readonly _extensionUri: vscode.Uri, private messageProvider: MessageProvider) {
         console.log('ButtonProvider constructor called');
@@ -241,6 +259,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             "'": '&#039;'
         };
         return text.replace(/[&<>"']/g, m => map[m]);
+    }
+
+    private getNonce(): string {
+        return Math.random().toString(36).slice(2, 12);
     }
 
     private async deleteCustomCommand(index: number, isEval: boolean = false) {
@@ -578,6 +600,16 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
         this.updateView();
     }
 
+    public updateLocalCompileActivity(activity: LocalCompileActivityState) {
+        this._localCompileActivity = { ...activity };
+        this.updateView();
+    }
+
+    public clearLocalCompileActivity() {
+        this._localCompileActivity = createIdleLocalCompileActivityState();
+        this.updateView();
+    }
+
     /**
      * 🚀 获取当前配置信息 - 适配版本2格式
      */
@@ -645,7 +677,8 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             configPathLabel: this.formatLocalCompilePathLabel(typeof configPath === 'string' ? configPath.trim() : ''),
             showWarnings: showWarnings ?? true,
             autoCompileOnSave: autoCompileOnSave ?? false,
-            messageLanguageLabel: describeCompilerDiagnosticMessageLanguage(messageLanguage)
+            messageLanguageLabel: describeCompilerDiagnosticMessageLanguage(messageLanguage),
+            activity: { ...this._localCompileActivity }
         };
     }
 
@@ -687,6 +720,13 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
     }
 
     private _getHtmlForWebview(webview: vscode.Webview): string {
+        const nonce = this.getNonce();
+        const contentSecurityPolicy = [
+            "default-src 'none'",
+            `img-src ${webview.cspSource} data:`,
+            `style-src ${webview.cspSource} 'nonce-${nonce}'`,
+            `script-src 'nonce-${nonce}'`
+        ].join('; ');
         const buttonStyle = `
             body {
                 padding: 12px;
@@ -694,6 +734,88 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 flex-direction: column;
                 gap: 8px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                position: relative;
+            }
+
+            body.local-compile-busy {
+                outline: 1px solid color-mix(in srgb, var(--vscode-progressBar-background) 65%, transparent);
+                outline-offset: 4px;
+            }
+
+            body.local-compile-blocked {
+                pointer-events: none;
+            }
+
+            .local-compile-status {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 12px;
+                border-radius: 10px;
+                border: 1px solid color-mix(in srgb, var(--vscode-progressBar-background) 55%, transparent);
+                background: linear-gradient(
+                    135deg,
+                    color-mix(in srgb, var(--vscode-editor-background) 82%, transparent),
+                    color-mix(in srgb, var(--vscode-progressBar-background) 18%, transparent)
+                );
+                box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+            }
+
+            .local-compile-status[hidden] {
+                display: none;
+            }
+
+            .local-compile-status-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-weight: 600;
+                color: var(--vscode-foreground);
+            }
+
+            .local-compile-status-icon {
+                font-size: 16px;
+            }
+
+            .local-compile-status-detail {
+                color: var(--vscode-descriptionForeground);
+                font-size: 12px;
+                line-height: 1.5;
+            }
+
+            .local-compile-progress {
+                position: relative;
+                height: 6px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--vscode-editorWidget-border) 55%, transparent);
+            }
+
+            .local-compile-progress-bar {
+                position: absolute;
+                inset: 0;
+                width: 40%;
+                border-radius: inherit;
+                background: linear-gradient(
+                    90deg,
+                    color-mix(in srgb, var(--vscode-progressBar-background) 25%, transparent),
+                    var(--vscode-progressBar-background),
+                    color-mix(in srgb, var(--vscode-progressBar-background) 25%, transparent)
+                );
+                animation: localCompileProgressSlide 1.15s ease-in-out infinite;
+                transform: translateX(-120%);
+            }
+
+            @keyframes localCompileProgressSlide {
+                0% {
+                    transform: translateX(-120%);
+                }
+                50% {
+                    transform: translateX(95%);
+                }
+                100% {
+                    transform: translateX(230%);
+                }
             }
 
             .button-row {
@@ -773,6 +895,10 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 justify-content: flex-start;
                 background: var(--vscode-button-secondaryBackground);
                 color: var(--vscode-button-secondaryForeground);
+            }
+
+            .dropdown-chevron {
+                margin-left: auto;
             }
             
             .dropdown-content {
@@ -1172,9 +1298,23 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>${buttonStyle}</style>
+                <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
+                <style nonce="${nonce}">${buttonStyle}</style>
             </head>
             <body>
+                <div class="local-compile-status" id="localCompileStatus" hidden>
+                    <div class="local-compile-status-header">
+                        <span class="local-compile-status-icon">⏳</span>
+                        <span id="localCompileStatusText">本地 LPCC 编译中</span>
+                    </div>
+                    <div class="local-compile-progress" aria-hidden="true">
+                        <div class="local-compile-progress-bar"></div>
+                    </div>
+                    <div class="local-compile-status-detail" id="localCompileDetailText">
+                        正在等待 mudlib 启动并返回编译结果，这可能需要几十秒。
+                    </div>
+                </div>
+
                 <div class="button-row">
                     <button id="localCompile" disabled>
                         <span class="button-icon">🏠</span>
@@ -1201,7 +1341,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <button class="dropdown-button" id="favoriteFilesDropdown">
                         <span class="button-icon">⭐</span>
                         <span>常用文件</span>
-                        <span style="margin-left: auto">▼</span>
+                        <span class="dropdown-chevron">▼</span>
                     </button>
                     <div class="dropdown-content" id="favoriteFilesList">
                         <div class="dropdown-items-container">
@@ -1231,7 +1371,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <button class="dropdown-button" id="customCommandsDropdown" disabled>
                         <span class="button-icon">⌨️</span>
                         <span>自定义命令</span>
-                        <span style="margin-left: auto">▼</span>
+                        <span class="dropdown-chevron">▼</span>
                     </button>
                     <div class="dropdown-content" id="customCommandsList">
                         <div class="dropdown-items-container">
@@ -1248,7 +1388,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                     <button class="dropdown-button" id="customEvalsDropdown" disabled>
                         <span class="button-icon">📝</span>
                         <span>自定义Eval</span>
-                        <span style="margin-left: auto">▼</span>
+                        <span class="dropdown-chevron">▼</span>
                     </button>
                     <div class="dropdown-content" id="customEvalsList">
                         <div class="dropdown-items-container">
@@ -1353,7 +1493,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                 </div>
                 </div>
 
-                <script>
+                <script nonce="${nonce}">
                     (function() {
                         const vscode = acquireVsCodeApi();
                         let state = {
@@ -1368,6 +1508,63 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             profiles: ${JSON.stringify(this.getCurrentConfig().profiles || {})},
                             activeProfileId: '${this.getCurrentConfig().activeProfile || 'default'}'
                         };
+
+                        function getLocalCompileActivity() {
+                            return state.localCompile?.activity || {
+                                inProgress: false,
+                                statusText: '',
+                                detailText: '',
+                                blockingUi: false
+                            };
+                        }
+
+                        function isInteractionLocked() {
+                            const activity = getLocalCompileActivity();
+                            return Boolean(activity.inProgress && activity.blockingUi);
+                        }
+
+                        function closeAllDropdowns() {
+                            document.querySelectorAll('.dropdown').forEach(dropdown => {
+                                dropdown.classList.remove('open');
+                            });
+                        }
+
+                        function updateLocalCompileStatus() {
+                            const activity = getLocalCompileActivity();
+                            const statusBox = document.getElementById('localCompileStatus');
+                            const statusText = document.getElementById('localCompileStatusText');
+                            const detailText = document.getElementById('localCompileDetailText');
+                            const localCompileButton = document.getElementById('localCompile');
+                            const body = document.body;
+
+                            body.classList.toggle('local-compile-busy', Boolean(activity.inProgress));
+                            body.classList.toggle('local-compile-blocked', isInteractionLocked());
+
+                            if (statusBox) {
+                                statusBox.hidden = !activity.inProgress;
+                            }
+                            if (statusText) {
+                                statusText.textContent = activity.statusText || '本地 LPCC 编译中';
+                            }
+                            if (detailText) {
+                                detailText.textContent = activity.detailText || '正在等待 mudlib 启动并返回编译结果，这可能需要几十秒。';
+                            }
+
+                            if (localCompileButton) {
+                                const iconSpan = localCompileButton.querySelector('.button-icon');
+                                const textSpan = localCompileButton.querySelector('span:last-child');
+                                if (iconSpan) {
+                                    iconSpan.textContent = activity.inProgress ? '⏳' : '🏠';
+                                }
+                                if (textSpan) {
+                                    textSpan.textContent = activity.inProgress ? '本地LPCC编译中...' : '本地LPCC编译';
+                                }
+                            }
+
+                            if (isInteractionLocked()) {
+                                closeAllDropdowns();
+                            }
+                        }
 
                         const configPanel = document.getElementById('configPanel');
                         const configDisplayToggle = document.getElementById('configDisplayToggle');
@@ -1609,10 +1806,17 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
                         // 更新按钮状态
                         function updateButtons() {
+                            const interactionLocked = isInteractionLocked();
+
                             Object.keys(commands).forEach(id => {
                                 const button = document.getElementById(id);
                                 if (button) {
-                                    if (id === 'connect') {
+                                    if (interactionLocked) {
+                                        button.disabled = true;
+                                        if (id === 'connect') {
+                                            button.className = 'button-disabled';
+                                        }
+                                    } else if (id === 'connect') {
                                         // 连接按钮的处理
                                         button.disabled = !state.initialized;
                                         button.className = state.initialized ?
@@ -1641,17 +1845,31 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
                             ['customCommandsDropdown', 'customEvalsDropdown'].forEach(id => {
                                 const button = document.getElementById(id);
                                 if (button) {
-                                    button.disabled = !state.initialized || !state.connected || !state.loggedIn;
+                                    button.disabled = interactionLocked
+                                        || !state.initialized
+                                        || !state.connected
+                                        || !state.loggedIn;
                                 }
                             });
                             const favoriteDropdown = document.getElementById('favoriteFilesDropdown');
                             if (favoriteDropdown) {
-                                favoriteDropdown.disabled = !state.initialized;
+                                favoriteDropdown.disabled = interactionLocked || !state.initialized;
+                            }
+
+                            const profileSelect = document.getElementById('profile-select');
+                            if (profileSelect) {
+                                profileSelect.disabled = interactionLocked;
+                            }
+
+                            const useProfileButton = document.getElementById('use-profile');
+                            if (useProfileButton) {
+                                useProfileButton.disabled = interactionLocked;
                             }
 
                             // 🚀 更新配置选择器和显示
                             updateProfileSelector();
                             updateConfigDisplay();
+                            updateLocalCompileStatus();
                         }
 
                         // 更新配置显示
@@ -1798,5 +2016,7 @@ export class ButtonProvider implements vscode.WebviewViewProvider {
 
     dispose() {
         this._disposables.forEach(d => d.dispose());
+        this._disposables = [];
+        this._view = undefined;
     }
 } 

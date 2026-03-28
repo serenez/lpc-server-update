@@ -58,10 +58,28 @@ test('button panel source keeps local and remote commands in the requested order
     }
 });
 
+test('local compile source exposes busy feedback and prevents overlapping manual runs', () => {
+    const buttonProviderSource = readSource('buttonProvider.ts');
+    const extensionSource = readSource('extension.ts');
+
+    assert.match(buttonProviderSource, /local-compile-status/);
+    assert.match(buttonProviderSource, /local-compile-blocked/);
+    assert.match(buttonProviderSource, /textContent = activity\.inProgress \? '本地LPCC编译中\.\.\.' : '本地LPCC编译';/);
+    assert.match(buttonProviderSource, /activity: \{ \.\.\.this\._localCompileActivity \}/);
+
+    assert.match(extensionSource, /let activeLocalCompileExecution: ActiveLocalCompileExecution \| null = null;/);
+    assert.match(extensionSource, /let manualLocalCompileCommandPending = false;/);
+    assert.match(extensionSource, /if \(activeLocalCompileExecution\) \{/);
+    assert.match(extensionSource, /notifyLocalCompileAlreadyRunning\(activeLocalCompileExecution\);/);
+    assert.match(extensionSource, /vscode\.window\.withProgress\(/);
+    assert.match(extensionSource, /buttonProvider\?\.updateLocalCompileActivity\(/);
+});
+
 test('source keeps a single unified output channel for routine use', () => {
     const extensionSource = readSource('extension.ts');
     const buttonProviderSource = readSource('buttonProvider.ts');
     const errorHandlerSource = readSource('utils/ErrorHandler.ts');
+    const tcpClientSource = readSource('tcpClient.ts');
 
     assert.match(extensionSource, /createOutputChannel\('LPC-MUD工具'\)/);
     assert.doesNotMatch(extensionSource, /createOutputChannel\('LPC服务器'\)/);
@@ -69,6 +87,8 @@ test('source keeps a single unified output channel for routine use', () => {
     assert.doesNotMatch(buttonProviderSource, /createOutputChannel\('游戏服务器编译器'\)/);
     assert.doesNotMatch(extensionSource, /createOutputChannel\('LPC性能监控报告'\)/);
     assert.doesNotMatch(errorHandlerSource, /createOutputChannel\('LPC服务器错误'\)/);
+    assert.match(tcpClientSource, /REMOTE_DIAGNOSTIC_COLLECTION_NAME = 'lpc-server-update-remote'/);
+    assert.doesNotMatch(tcpClientSource, /createDiagnosticCollection\('lpc'\)/);
 });
 
 test('source avoids noisy heading logs for copy path and auto declaration commands', () => {
@@ -203,10 +223,21 @@ test('extension lifecycle source disposes long-lived services and initializes co
     assert.notEqual(configManagerIndex, -1);
     assert.notEqual(buttonProviderIndex, -1);
     assert.ok(configManagerIndex < buttonProviderIndex, 'config manager should initialize before button provider');
-    assert.match(extensionSource, /tcpClient\?\.dispose\(\);/);
-    assert.match(extensionSource, /buttonProvider\?\.dispose\(\);/);
+    assert.match(extensionSource, /context\.subscriptions\.push\(messageProvider, buttonProvider\);/);
+    assert.match(extensionSource, /context\.subscriptions\.push\(tcpClient, configManager\);/);
+    assert.match(extensionSource, /disposeQuietly\('TcpClient', tcpClient\);/);
+    assert.match(extensionSource, /disposeQuietly\('ButtonProvider', buttonProvider\);/);
     assert.match(configManagerSource, /private static instance: ConfigManager \| undefined;/);
     assert.match(configManagerSource, /ConfigManager\.instance = undefined;/);
+});
+
+test('shutdown source avoids user-facing disconnect flow and keeps config watch non-persistent', () => {
+    const extensionSource = readSource('extension.ts');
+    const configManagerSource = readSource('config/ConfigManager.ts');
+
+    assert.match(extensionSource, /function disposeQuietly\(label: string, disposable: \{ dispose\(\): void \} \| undefined\): void/);
+    assert.doesNotMatch(extensionSource, /tcpClient\?\.disconnect\(\);/);
+    assert.match(configManagerSource, /fs\.watchFile\(this\.configPath, \{ persistent: false, interval: 1000 \}/);
 });
 
 test('tcp client source prevents overlapping reconnect attempts', () => {
@@ -225,6 +256,18 @@ test('message provider source hardens webview rendering with CSP and escaped tex
     assert.match(source, /let formattedMessage = this\.escapeTextContent\(message\);/);
     assert.match(source, /data-file="\$\{this\.escapeAttribute\(filePath\)\}"/);
     assert.match(source, /data-local-path="\$\{this\.escapeAttribute\(payload\.localPath\)\}"/);
+});
+
+test('button provider source hardens webview rendering with CSP and nonce-protected inline assets', () => {
+    const source = readSource('buttonProvider.ts');
+
+    assert.match(source, /private getNonce\(\): string/);
+    assert.match(source, /Content-Security-Policy/);
+    assert.match(source, /style-src \$\{webview\.cspSource\} 'nonce-\$\{nonce\}'/);
+    assert.match(source, /<style nonce="\$\{nonce\}">/);
+    assert.match(source, /<script nonce="\$\{nonce\}">/);
+    assert.match(source, /class="dropdown-chevron"/);
+    assert.doesNotMatch(source, /style="margin-left: auto"/);
 });
 
 test('performance monitor source handles empty metrics safely', () => {

@@ -58,6 +58,19 @@ let localCompileOutputChannel: vscode.OutputChannel;
 let localCompileDiagnosticCollection: vscode.DiagnosticCollection;
 const skipNextAutoLocalCompileForFile = new Set<string>();
 let lastKnownFileEditorUri: string | undefined;
+let activeLocalCompileExecution: ActiveLocalCompileExecution | null = null;
+let manualLocalCompileCommandPending = false;
+
+function disposeQuietly(label: string, disposable: { dispose(): void } | undefined): void {
+    if (!disposable) {
+        return;
+    }
+    try {
+        disposable.dispose();
+    } catch (error) {
+        console.error(`${label} 释放失败:`, error);
+    }
+}
 
 interface Config {
     host: string;
@@ -125,6 +138,12 @@ type LocalCompileTrigger = 'manual' | 'autoSave';
 
 interface ExecuteLocalCompileOptions extends ResolveLocalCompilePlanOptions {
     trigger: LocalCompileTrigger;
+}
+
+interface ActiveLocalCompileExecution {
+    trigger: LocalCompileTrigger;
+    filePath: string;
+    scopeLabel: string;
 }
 
 class LocalCompileProcessError extends Error {
@@ -1070,6 +1089,34 @@ function extractLocalCompileDiagnostics(result: Pick<LocalCompileProcessResult, 
     return parseLocalCompileDiagnostics([result.stderr, result.stdout].filter(Boolean).join('\n'));
 }
 
+function describeLocalCompileWaitingTarget(filePath: string, mudPath?: string): string {
+    return mudPath ?? nodePath.basename(filePath);
+}
+
+function updateManualLocalCompileActivity(
+    filePath: string,
+    statusText: string,
+    detailText: string,
+    mudPath?: string
+): void {
+    buttonProvider?.updateLocalCompileActivity({
+        inProgress: true,
+        statusText,
+        detailText: `${detailText}: ${describeLocalCompileWaitingTarget(filePath, mudPath)}`,
+        blockingUi: true
+    });
+}
+
+function clearManualLocalCompileActivity(): void {
+    buttonProvider?.clearLocalCompileActivity();
+}
+
+function notifyLocalCompileAlreadyRunning(execution: ActiveLocalCompileExecution): void {
+    const message = `${execution.scopeLabel}正在进行，请等待当前任务结束`;
+    localCompileOutputChannel.appendLine(message);
+    vscode.window.showInformationMessage(message);
+}
+
 function getLocalCompileScopeLabel(trigger: LocalCompileTrigger): string {
     return trigger === 'autoSave' ? '保存自动本地编译' : '本地 LPCC 编译';
 }
@@ -1086,54 +1133,108 @@ async function executeLocalCompileForFile(
     filePath: string,
     options: ExecuteLocalCompileOptions
 ): Promise<void> {
+    if (activeLocalCompileExecution) {
+        if (options.trigger === 'manual') {
+            notifyLocalCompileAlreadyRunning(activeLocalCompileExecution);
+        }
+        return;
+    }
+
     let currentPlan: MudlibLocalCompilePlan | undefined;
     const { timeout, showWarnings, messageLanguage } = getLocalCompileSettings();
     const scopeLabel = getLocalCompileScopeLabel(options.trigger);
     const emitTimelineMessages = shouldEmitLocalCompileTimelineMessages(options.trigger);
     const showNotifications = shouldShowLocalCompileNotifications(options.trigger);
+    const isManualCompile = options.trigger === 'manual';
 
-    try {
-        currentPlan = await resolveLocalCompilePlanForFile(filePath, { allowPrompt: options.allowPrompt });
-        if (!currentPlan) {
-            return;
-        }
+    activeLocalCompileExecution = {
+        trigger: options.trigger,
+        filePath,
+        scopeLabel
+    };
 
-        clearLocalCompileDiagnostics();
-        if (emitTimelineMessages) {
-            messageProvider?.addMessage(`🏠 ${scopeLabel}: ${currentPlan.mudPath}`);
-        }
-
-        const result = await runLocalCompileProcess(currentPlan, timeout);
-        const diagnostics = extractLocalCompileDiagnostics(result);
-        const visibleDiagnostics = filterLocalCompileDiagnostics(diagnostics, showWarnings);
-
-        if (visibleDiagnostics.length > 0) {
-            await publishLocalCompileDiagnostics(currentPlan, visibleDiagnostics);
-            const { errors, warnings } = partitionLocalCompileDiagnostics(visibleDiagnostics);
-            if (emitTimelineMessages) {
-                appendLocalCompileDiagnosticMessages(currentPlan, visibleDiagnostics);
+    const runCompile = async (
+        progress?: vscode.Progress<{ message?: string; increment?: number }>
+    ): Promise<void> => {
+        try {
+            if (isManualCompile) {
+                updateManualLocalCompileActivity(
+                    filePath,
+                    '本地 LPCC 编译中',
+                    '正在准备并等待编译结果，这可能需要几十秒'
+                );
+                progress?.report({ message: `准备编译 ${describeLocalCompileWaitingTarget(filePath)}` });
             }
 
-            const primaryDiagnostic = pickPrimaryLocalCompileDiagnostic(visibleDiagnostics);
-            const primarySummary = primaryDiagnostic
-                ? formatCompilerDiagnosticSummary(primaryDiagnostic, { languageMode: messageLanguage })
-                : '未返回错误详情';
+            currentPlan = await resolveLocalCompilePlanForFile(filePath, { allowPrompt: options.allowPrompt });
+            if (!currentPlan) {
+                return;
+            }
 
-            if (errors.length > 0) {
+            if (isManualCompile) {
+                updateManualLocalCompileActivity(
+                    filePath,
+                    '本地 LPCC 编译中',
+                    '正在等待 mudlib 启动并返回编译结果',
+                    currentPlan.mudPath
+                );
+                progress?.report({ message: currentPlan.mudPath });
+            }
+
+            clearLocalCompileDiagnostics();
+            if (emitTimelineMessages) {
+                messageProvider?.addMessage(`🏠 ${scopeLabel}: ${currentPlan.mudPath}`);
+            }
+
+            const result = await runLocalCompileProcess(currentPlan, timeout);
+            const diagnostics = extractLocalCompileDiagnostics(result);
+            const visibleDiagnostics = filterLocalCompileDiagnostics(diagnostics, showWarnings);
+
+            if (visibleDiagnostics.length > 0) {
+                await publishLocalCompileDiagnostics(currentPlan, visibleDiagnostics);
+                const { errors, warnings } = partitionLocalCompileDiagnostics(visibleDiagnostics);
+                if (emitTimelineMessages) {
+                    appendLocalCompileDiagnosticMessages(currentPlan, visibleDiagnostics);
+                }
+
+                const primaryDiagnostic = pickPrimaryLocalCompileDiagnostic(visibleDiagnostics);
+                const primarySummary = primaryDiagnostic
+                    ? formatCompilerDiagnosticSummary(primaryDiagnostic, { languageMode: messageLanguage })
+                    : '未返回错误详情';
+
+                if (errors.length > 0) {
+                    writeLocalCompileOutputSummaryBlock(
+                        scopeLabel,
+                        currentPlan.mudPath,
+                        '失败',
+                        `❌ ${scopeLabel}失败: ${primarySummary}`,
+                        errors,
+                        warnings,
+                        { languageMode: messageLanguage }
+                    );
+                    if (emitTimelineMessages) {
+                        messageProvider?.addMessage(`❌ ${scopeLabel}失败: ${primarySummary}`);
+                    }
+                    if (showNotifications) {
+                        vscode.window.showErrorMessage(`${scopeLabel}失败: ${primarySummary}`);
+                    }
+                    return;
+                }
+
                 writeLocalCompileOutputSummaryBlock(
                     scopeLabel,
                     currentPlan.mudPath,
-                    '失败',
-                    `❌ ${scopeLabel}失败: ${primarySummary}`,
-                    errors,
+                    '完成（警告）',
+                    `⚠️ ${scopeLabel}完成，但有警告: ${primarySummary}`,
+                    [],
                     warnings,
                     { languageMode: messageLanguage }
                 );
                 if (emitTimelineMessages) {
-                    messageProvider?.addMessage(`❌ ${scopeLabel}失败: ${primarySummary}`);
+                    messageProvider?.addMessage(`⚠️ ${scopeLabel}完成，但有警告: ${primarySummary}`);
                 }
                 if (showNotifications) {
-                    vscode.window.showErrorMessage(`${scopeLabel}失败: ${primarySummary}`);
+                    vscode.window.showWarningMessage(`${scopeLabel}完成，但有警告: ${primarySummary}`);
                 }
                 return;
             }
@@ -1141,83 +1242,88 @@ async function executeLocalCompileForFile(
             writeLocalCompileOutputSummaryBlock(
                 scopeLabel,
                 currentPlan.mudPath,
-                '完成（警告）',
-                `⚠️ ${scopeLabel}完成，但有警告: ${primarySummary}`,
-                [],
-                warnings,
-                { languageMode: messageLanguage }
+                '成功',
+                `✅ ${scopeLabel}完成: ${currentPlan.mudPath}`
             );
             if (emitTimelineMessages) {
-                messageProvider?.addMessage(`⚠️ ${scopeLabel}完成，但有警告: ${primarySummary}`);
+                messageProvider?.addMessage(`✅ ${scopeLabel}完成: ${currentPlan.mudPath}`);
             }
             if (showNotifications) {
-                vscode.window.showWarningMessage(`${scopeLabel}完成，但有警告: ${primarySummary}`);
+                vscode.window.showInformationMessage(`${scopeLabel}完成: ${currentPlan.mudPath}`);
             }
-            return;
-        }
+        } catch (error) {
+            const processDiagnostics = error instanceof LocalCompileProcessError
+                ? extractLocalCompileDiagnostics(error)
+                : [];
+            const visibleProcessDiagnostics = filterLocalCompileDiagnostics(processDiagnostics, showWarnings);
+            const partitionedProcessDiagnostics = partitionLocalCompileDiagnostics(visibleProcessDiagnostics);
+            if (error instanceof LocalCompileProcessError && visibleProcessDiagnostics.length > 0 && currentPlan) {
+                await publishLocalCompileDiagnostics(currentPlan, visibleProcessDiagnostics);
+                if (emitTimelineMessages) {
+                    appendLocalCompileDiagnosticMessages(currentPlan, visibleProcessDiagnostics);
+                }
+            }
 
-        writeLocalCompileOutputSummaryBlock(
-            scopeLabel,
-            currentPlan.mudPath,
-            '成功',
-            `✅ ${scopeLabel}完成: ${currentPlan.mudPath}`
-        );
-        if (emitTimelineMessages) {
-            messageProvider?.addMessage(`✅ ${scopeLabel}完成: ${currentPlan.mudPath}`);
-        }
-        if (showNotifications) {
-            vscode.window.showInformationMessage(`${scopeLabel}完成: ${currentPlan.mudPath}`);
-        }
-    } catch (error) {
-        const processDiagnostics = error instanceof LocalCompileProcessError
-            ? extractLocalCompileDiagnostics(error)
-            : [];
-        const visibleProcessDiagnostics = filterLocalCompileDiagnostics(processDiagnostics, showWarnings);
-        const partitionedProcessDiagnostics = partitionLocalCompileDiagnostics(visibleProcessDiagnostics);
-        if (error instanceof LocalCompileProcessError && visibleProcessDiagnostics.length > 0 && currentPlan) {
-            await publishLocalCompileDiagnostics(currentPlan, visibleProcessDiagnostics);
+            const errorMessage = error instanceof Error
+                ? error instanceof LocalCompileProcessError
+                    ? visibleProcessDiagnostics.length > 0
+                        ? formatCompilerDiagnosticSummary(
+                            pickPrimaryLocalCompileDiagnostic(visibleProcessDiagnostics) ?? visibleProcessDiagnostics[0],
+                            { languageMode: messageLanguage }
+                        )
+                        : summarizeLocalCompileError(error.stderr, error.stdout)
+                    : error.message
+                : String(error);
+
+            if (visibleProcessDiagnostics.length > 0) {
+                writeLocalCompileOutputSummaryBlock(
+                    scopeLabel,
+                    currentPlan?.mudPath ?? filePath,
+                    '失败',
+                    `❌ ${scopeLabel}失败: ${errorMessage}`,
+                    partitionedProcessDiagnostics.errors,
+                    partitionedProcessDiagnostics.warnings,
+                    { languageMode: messageLanguage }
+                );
+            } else {
+                writeLocalCompileOutputSummaryBlock(
+                    scopeLabel,
+                    currentPlan?.mudPath ?? filePath,
+                    '失败',
+                    `❌ ${scopeLabel}失败: ${errorMessage}`
+                );
+            }
+
             if (emitTimelineMessages) {
-                appendLocalCompileDiagnosticMessages(currentPlan, visibleProcessDiagnostics);
+                messageProvider?.addMessage(`❌ ${scopeLabel}失败: ${errorMessage}`);
+            }
+            if (showNotifications) {
+                vscode.window.showErrorMessage(`${scopeLabel}失败: ${errorMessage}`);
+            }
+        } finally {
+            if (activeLocalCompileExecution?.filePath === filePath
+                && activeLocalCompileExecution?.trigger === options.trigger) {
+                activeLocalCompileExecution = null;
+            }
+            if (isManualCompile) {
+                clearManualLocalCompileActivity();
             }
         }
+    };
 
-        const errorMessage = error instanceof Error
-            ? error instanceof LocalCompileProcessError
-                ? visibleProcessDiagnostics.length > 0
-                    ? formatCompilerDiagnosticSummary(
-                        pickPrimaryLocalCompileDiagnostic(visibleProcessDiagnostics) ?? visibleProcessDiagnostics[0],
-                        { languageMode: messageLanguage }
-                    )
-                    : summarizeLocalCompileError(error.stderr, error.stdout)
-                : error.message
-            : String(error);
-
-        if (visibleProcessDiagnostics.length > 0) {
-            writeLocalCompileOutputSummaryBlock(
-                scopeLabel,
-                currentPlan?.mudPath ?? filePath,
-                '失败',
-                `❌ ${scopeLabel}失败: ${errorMessage}`,
-                partitionedProcessDiagnostics.errors,
-                partitionedProcessDiagnostics.warnings,
-                { languageMode: messageLanguage }
-            );
-        } else {
-            writeLocalCompileOutputSummaryBlock(
-                scopeLabel,
-                currentPlan?.mudPath ?? filePath,
-                '失败',
-                `❌ ${scopeLabel}失败: ${errorMessage}`
-            );
-        }
-
-        if (emitTimelineMessages) {
-            messageProvider?.addMessage(`❌ ${scopeLabel}失败: ${errorMessage}`);
-        }
-        if (showNotifications) {
-            vscode.window.showErrorMessage(`${scopeLabel}失败: ${errorMessage}`);
-        }
+    if (isManualCompile) {
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: '本地 LPCC 编译中',
+                cancellable: false
+            },
+            progress => runCompile(progress)
+        );
+        return;
     }
+
+    await runCompile();
 }
 
 function isAutoDeclareOnSaveEnabled(): boolean {
@@ -1508,6 +1614,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 创建视图提供者
     messageProvider = new MessageProvider(context.extensionUri);
     buttonProvider = new ButtonProvider(context.extensionUri, messageProvider);
+    context.subscriptions.push(messageProvider, buttonProvider);
 
     messageProvider.addMessage('正在初始化插件...');
 
@@ -1538,6 +1645,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 创建TcpClient实例
     tcpClient = new TcpClient(outputChannel, localCompileOutputChannel, buttonProvider, messageProvider);
+    context.subscriptions.push(tcpClient, configManager);
 
     // 注册所有命令
     const commands = {
@@ -1657,6 +1765,10 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         },
         'game-server-compiler.localCompileCurrentFile': async () => {
+            if (manualLocalCompileCommandPending) {
+                vscode.window.showInformationMessage('本地 LPCC 编译正在进行中，请等待当前任务结束');
+                return;
+            }
             const editor = getPreferredFileEditor();
             const filePath = editor?.document.uri.fsPath;
             if (!filePath) {
@@ -1668,31 +1780,36 @@ export async function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            if (editor.document.isDirty) {
-                const choice = await vscode.window.showWarningMessage(
-                    '当前文件还未保存，本地 LPCC 默认编译磁盘上的内容。是否先保存再编译？',
-                    '保存后编译',
-                    '直接编译',
-                    '取消'
-                );
-                if (choice === '取消' || !choice) {
-                    return;
-                }
-                if (choice === '保存后编译') {
-                    skipNextAutoLocalCompileForFile.add(filePath);
-                    const saved = await editor.document.save();
-                    if (!saved) {
-                        skipNextAutoLocalCompileForFile.delete(filePath);
-                        vscode.window.showErrorMessage('文件保存失败，本地 LPCC 编译已取消');
+            manualLocalCompileCommandPending = true;
+            try {
+                if (editor.document.isDirty) {
+                    const choice = await vscode.window.showWarningMessage(
+                        '当前文件还未保存，本地 LPCC 默认编译磁盘上的内容。是否先保存再编译？',
+                        '保存后编译',
+                        '直接编译',
+                        '取消'
+                    );
+                    if (choice === '取消' || !choice) {
                         return;
                     }
+                    if (choice === '保存后编译') {
+                        skipNextAutoLocalCompileForFile.add(filePath);
+                        const saved = await editor.document.save();
+                        if (!saved) {
+                            skipNextAutoLocalCompileForFile.delete(filePath);
+                            vscode.window.showErrorMessage('文件保存失败，本地 LPCC 编译已取消');
+                            return;
+                        }
+                    }
                 }
-            }
 
-            await executeLocalCompileForFile(filePath, {
-                trigger: 'manual',
-                allowPrompt: true
-            });
+                await executeLocalCompileForFile(filePath, {
+                    trigger: 'manual',
+                    allowPrompt: true
+                });
+            } finally {
+                manualLocalCompileCommandPending = false;
+            }
         },
         'game-server-compiler.copyMudPath': async () => {
             const editor = getPreferredFileEditor();
@@ -1973,16 +2090,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     console.log('停用插件...');
-    try {
-        if (tcpClient?.isConnected()) {
-            tcpClient.disconnect();
-        }
-        tcpClient?.dispose();
-        buttonProvider?.dispose();
-        messageProvider?.dispose();
-        configManager?.dispose();
-        console.log('插件停用完成');
-    } catch (error) {
-        console.error('插件停用错误:', error);
-    }
+    disposeQuietly('TcpClient', tcpClient);
+    disposeQuietly('ButtonProvider', buttonProvider);
+    disposeQuietly('MessageProvider', messageProvider);
+    disposeQuietly('ConfigManager', configManager);
+    console.log('插件停用完成');
 } 

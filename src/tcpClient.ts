@@ -39,6 +39,7 @@ import {
 } from './utils/compileOutput';
 
 export class TcpClient implements IDisposable {
+    private static readonly REMOTE_DIAGNOSTIC_COLLECTION_NAME = 'lpc-server-update-remote';
     private socket: net.Socket | null = null;
     private connected: boolean = false;
     private loggedIn: boolean = false;
@@ -82,6 +83,7 @@ export class TcpClient implements IDisposable {
     private suppressCompilerContinuation: boolean = false;
     private commandTimeout: number = 30000; // 30秒超时
     private pendingCommand: boolean = false;
+    private disposed: boolean = false;
 
     // 🚀 性能优化：预编译的正则表达式（静态常量）
     private static readonly ANSI_COLOR_CODES = /\x1b\[f#[0-9a-fA-F]{6}m/g;
@@ -136,7 +138,9 @@ export class TcpClient implements IDisposable {
         this.initSocket();
 
         // 创建诊断集合
-        this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
+        this.diagnosticCollection = vscode.languages.createDiagnosticCollection(
+            TcpClient.REMOTE_DIAGNOSTIC_COLLECTION_NAME
+        );
 
     }
 
@@ -713,7 +717,7 @@ export class TcpClient implements IDisposable {
     }
 
     private startReconnect() {
-        if (this.reconnectTimer || !this.lastHost || !this.lastPort) {
+        if (this.disposed || this.reconnectTimer || !this.lastHost || !this.lastPort) {
             return;
         }
 
@@ -1012,6 +1016,10 @@ export class TcpClient implements IDisposable {
 
     public disconnect() {
         try {
+            if (this.disposed) {
+                return;
+            }
+
             // 重置所有状态
             this.connected = false;
             this.loggedIn = false;
@@ -1024,9 +1032,17 @@ export class TcpClient implements IDisposable {
             
             // 清理诊断信息
             this.clearDiagnostics();
+
+            this.stopReconnect();
+            if (this.retryTimer) {
+                clearTimeout(this.retryTimer);
+                this.retryTimer = null;
+            }
             
             // 关闭socket
             if (this.socket) {
+                this.socket.removeAllListeners();
+                this.socket.unref?.();
                 this.socket.destroy();
                 this.socket = null;
             }
@@ -1150,6 +1166,9 @@ export class TcpClient implements IDisposable {
     }
 
     private handleConnectionError(error: Error) {
+        if (this.disposed) {
+            return;
+        }
         this.log(`错误信息: ${error.message}`, LogLevel.ERROR);
         
         if (error.message.includes('ECONNREFUSED')) {
@@ -1186,6 +1205,9 @@ export class TcpClient implements IDisposable {
     }
 
     private handleDisconnect() {
+        if (this.disposed) {
+            return;
+        }
         const wasConnected = this.connected;
         
         this.log('==== 开始处理断开连接 ====', LogLevel.INFO);
@@ -1224,7 +1246,7 @@ export class TcpClient implements IDisposable {
         
         this.log('==== 断开连接处理完成 ====', LogLevel.INFO);
         
-        if (wasConnected && !this._isReconnecting) {
+        if (wasConnected && !this._isReconnecting && !this.disposed) {
             this.startReconnect();
         }
     }
@@ -1556,17 +1578,29 @@ export class TcpClient implements IDisposable {
      * 确保没有内存泄漏
      */
     dispose() {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
+        if (this.disposed) {
+            return;
         }
+        this.disposed = true;
+
+        this.stopReconnect();
         if (this.retryTimer) {
             clearTimeout(this.retryTimer);
             this.retryTimer = null;
         }
+        this.connectPromise = null;
+        this.pendingCommand = false;
+        this.connected = false;
+        this.loggedIn = false;
+        this.isCollectingMuy = false;
+        this.muyBuffer = '';
+        this.currentCompileMudPath = null;
+        this.currentCompileRootPath = null;
 
         // 清理socket
         if (this.socket) {
+            this.socket.removeAllListeners();
+            this.socket.unref?.();
             this.socket.destroy();
             this.socket = null;
         }
@@ -1584,6 +1618,7 @@ export class TcpClient implements IDisposable {
 
         this.configDisposables.forEach(d => d.dispose());
         this.configDisposables = [];
+        this.messageProvider = undefined;
     }
 
     private showCompileError(
@@ -1625,7 +1660,9 @@ export class TcpClient implements IDisposable {
             diagnostic.source = 'FluffOS Compiler';
 
             if (!this.diagnosticCollection) {
-                this.diagnosticCollection = vscode.languages.createDiagnosticCollection('lpc');
+                this.diagnosticCollection = vscode.languages.createDiagnosticCollection(
+                    TcpClient.REMOTE_DIAGNOSTIC_COLLECTION_NAME
+                );
             }
 
             const existingDiagnostics = this.diagnosticCollection.get(fileUri) ?? [];
